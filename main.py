@@ -523,6 +523,179 @@ def verify_integrity(db: Session = Depends(get_db)) -> dict:
     return verify_log_integrity(db)
 
 
+
+
+# ── Manager-initiated leaver request ─────────────────────────
+@app.post("/users/{user_id}/terminate-request", tags=["Lifecycle"])
+async def terminate_request(
+    user_id    : int,
+    manager_id : int,
+    reason     : str = "Employee resignation",
+    db         : Session = Depends(get_db),
+) -> dict:
+    """
+    Manager initiates a leaver request for one of their direct reports.
+    Immediately triggers the kill switch — offboards the user, revokes
+    all access, and logs the termination with the manager as actor.
+
+    This closes the JML loop: Joiner (IT Admin) → Mover (Manager approval)
+    → Leaver (Manager initiated OR IT Admin kill switch).
+
+    Example:
+        POST /users/1/terminate-request?manager_id=2&reason=Resignation
+    """
+    user = get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
+    if user.status == "Inactive":
+        raise HTTPException(status_code=409,
+            detail=f"User '{user.username}' is already Inactive.")
+
+    # Validate manager relationship
+    if user.manager_id != manager_id:
+        raise HTTPException(status_code=403,
+            detail=f"Manager {manager_id} is not the direct manager of '{user.username}'. "
+                   f"Only the direct manager can initiate a termination request.")
+
+    # Log the termination request before killing access
+    append_log(
+        db             = db,
+        actor_id       = manager_id,
+        action         = "TERMINATION_REQUESTED",
+        target_user_id = user_id,
+        outcome        = "Initiated",
+        details        = {
+            "reason"        : reason,
+            "initiated_by"  : f"manager:{manager_id}",
+            "department"    : user.department,
+        },
+    )
+
+    # Trigger the kill switch immediately — same as IT Admin offboard
+    entitlements = BIRTHRIGHT_POLICIES.get(user.department, ["Slack_General"])
+    logs = await trigger_leaver_kill_switch(user, entitlements, db)
+
+    # Override the audit log actor to show manager initiated this
+    append_log(
+        db             = db,
+        actor_id       = manager_id,
+        action         = "TERMINATION_COMPLETED",
+        target_user_id = user_id,
+        outcome        = "Success",
+        details        = {
+            "reason"         : reason,
+            "initiated_by"   : f"manager:{manager_id}",
+            "resources_revoked": [r.details.get("resource_name") for r in logs],
+        },
+    )
+
+    return {
+        "event"        : "LEAVER",
+        "triggered_by" : "MANAGER",
+        "manager_id"   : manager_id,
+        "user_id"      : user_id,
+        "username"     : user.username,
+        "department"   : user.department,
+        "reason"       : reason,
+        "status"       : "Inactive",
+        "revoked"      : [r.details.get("resource_name") for r in logs],
+        "all_revoked"  : all(r.outcome == "Success" for r in logs),
+        "audit_entries": len(logs) + 2,
+        "timestamp"    : datetime.now(timezone.utc).isoformat(),
+    }
+
+# ── Orphaned account scanner ──────────────────────────────────
+@app.get("/users/orphaned-check", tags=["Users"])
+def orphaned_check(
+    inactive_days: int = 30,
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Scans for potentially orphaned accounts — Active users with
+    no audit activity in the last N days.
+
+    An orphaned account is one that was never properly offboarded:
+    the person left but their access was never revoked.
+    This is one of the top causes of data breaches.
+
+    Returns:
+      - orphaned: users with no recent audit activity
+      - clean:    users with recent activity
+      - inactive_days: the threshold used
+    """
+    from datetime import timedelta
+    from sqlalchemy import func
+
+    cutoff     = datetime.now(timezone.utc) - timedelta(days=inactive_days)
+    all_users  = get_all_users(db)
+    orphaned   = []
+    clean      = []
+
+    for user in all_users:
+        if user.status != "Active":
+            continue  # only scan Active users
+
+        # Find most recent audit entry for this user
+        last_log = (
+            db.query(AuditLogDB)
+            .filter(AuditLogDB.target_user_id == user.id)
+            .order_by(AuditLogDB.id.desc())
+            .first()
+        )
+
+        if last_log is None:
+            # Never had any audit activity — definitely orphaned
+            orphaned.append({
+                "id"              : user.id,
+                "username"        : user.username,
+                "email"           : user.email,
+                "department"      : user.department,
+                "job_title"       : user.job_title,
+                "status"          : user.status,
+                "last_activity"   : None,
+                "days_inactive"   : None,
+                "risk"            : "HIGH",
+                "reason"          : "No audit record — account may predate NexusID",
+            })
+        else:
+            ts = last_log.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+
+            days_inactive = (datetime.now(timezone.utc) - ts).days
+
+            if ts < cutoff:
+                orphaned.append({
+                    "id"            : user.id,
+                    "username"      : user.username,
+                    "email"         : user.email,
+                    "department"    : user.department,
+                    "job_title"     : user.job_title,
+                    "status"        : user.status,
+                    "last_activity" : ts.isoformat(),
+                    "days_inactive" : days_inactive,
+                    "risk"          : "HIGH" if days_inactive > 60 else "MEDIUM",
+                    "reason"        : f"No activity for {days_inactive} days",
+                })
+            else:
+                clean.append({
+                    "id"            : user.id,
+                    "username"      : user.username,
+                    "department"    : user.department,
+                    "last_activity" : ts.isoformat(),
+                    "days_inactive" : days_inactive,
+                })
+
+    return {
+        "scanned_at"    : datetime.now(timezone.utc).isoformat(),
+        "inactive_days" : inactive_days,
+        "total_active"  : len(all_users),
+        "orphaned_count": len(orphaned),
+        "clean_count"   : len(clean),
+        "orphaned"      : orphaned,
+        "clean"         : clean,
+    }
+
 # ── JIT background expiry task ────────────────────────────────
 async def jit_expiry_worker():
     """

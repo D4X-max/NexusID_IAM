@@ -198,6 +198,35 @@ with st.sidebar:
 ALL_USERS = get_live_users()
 user_map  = {u["id"]: u for u in ALL_USERS}
 
+# ── System health check ───────────────────────────────────────
+_health = api_get("/")
+if isinstance(_health, dict) and "error" in _health:
+    st.markdown("""
+    <div style='background:#3a0d0d;border:1px solid #f8514933;border-radius:8px;
+                padding:12px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px'>
+        <div style='width:10px;height:10px;background:#f85149;border-radius:50%;flex-shrink:0'></div>
+        <div style='font-size:13px;color:#f85149;font-family:IBM Plex Mono,monospace'>
+            API OFFLINE — uvicorn is not running.
+            Start it with: <code style='background:#0f0f1a;padding:2px 8px;border-radius:4px'>
+            uvicorn main:app --reload</code>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown(f"""
+    <div style='background:#0d3a2e;border:1px solid #00d4aa33;border-radius:8px;
+                padding:10px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px'>
+        <div style='width:10px;height:10px;background:#00d4aa;border-radius:50%;
+                    flex-shrink:0;animation:pulse 2s infinite'></div>
+        <div style='font-size:12px;color:#00d4aa;font-family:IBM Plex Mono,monospace'>
+            API ONLINE &nbsp;·&nbsp; NexusID {_health.get("version","")}&nbsp;·&nbsp;
+            {_health.get("storage","")}
+        </div>
+    </div>
+    <style>@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}</style>
+    """, unsafe_allow_html=True)
+
+
 
 # ══════════════════════════════════════════════════════════════
 #  VIEW 1 — EMPLOYEE
@@ -436,7 +465,7 @@ elif "Manager" in view:
     st.markdown('<div class="nx-title">Manager Portal</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">Approve access requests · View your team</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["✅  Pending Approvals", "👥  My Team", "🔄  Request Transfer"])
+    tab1, tab2, tab3, tab4 = st.tabs(["✅  Pending Approvals", "👥  My Team", "🔄  Request Transfer", "🚪  Initiate Leaver"])
 
     # ── Tab 1: Approvals ──────────────────────────────────────
     with tab1:
@@ -575,6 +604,89 @@ elif "Manager" in view:
                 st.error(str(resp.get("detail", resp)))
 
 
+    # ── Tab 4: Initiate Leaver ────────────────────────────────
+    with tab4:
+        st.markdown('<div class="nx-header">Initiate leaver request for direct report</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                When a team member resigns or is terminated, submit a leaver request here.
+                This immediately revokes all their access and logs the termination
+                with you as the initiating actor — no need to contact IT Admin separately.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Only show active direct reports
+        my_team_active = [u for u in ALL_USERS
+                          if u.get("manager_id") == 1 and u["status"] == "Active"]
+
+        if not my_team_active:
+            st.markdown("""
+            <div class="nx-card" style="text-align:center;padding:30px">
+                <div style='color:#8b949e;font-size:13px'>No active direct reports to offboard.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            with st.form("leaver_form"):
+                team_opts  = {u["id"]: f"{u['username']} ({u['department']})"
+                              for u in my_team_active}
+                leaver_uid = st.selectbox("Select team member",
+                                           list(team_opts.keys()),
+                                           format_func=lambda x: team_opts[x])
+                leaver_reason = st.selectbox("Reason", [
+                    "Employee resignation",
+                    "End of contract",
+                    "Mutual termination",
+                    "Performance-based termination",
+                    "Redundancy",
+                ])
+                st.markdown("""
+                <div style='background:#3a0d0d;border:1px solid #f8514933;
+                             border-radius:6px;padding:12px 16px;margin-top:8px'>
+                    <div style='font-size:12px;color:#f85149;font-family:IBM Plex Mono,monospace'>
+                        WARNING — This action immediately revokes all access.
+                        It cannot be undone without re-hiring the user.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                leaver_submit = st.form_submit_button("Confirm Leaver Request", type="primary")
+
+            if leaver_submit:
+                selected_user = next(u for u in my_team_active if u["id"] == leaver_uid)
+                with st.spinner(f"Revoking all access for {selected_user['username']}..."):
+                    code, resp = api_post(
+                        f"/users/{leaver_uid}/terminate-request",
+                        params={"manager_id": 1, "reason": leaver_reason}
+                    )
+                if code == 200:
+                    st.success(f"{selected_user['username']} has been offboarded.")
+                    st.markdown(f"""
+                    <div class="nx-card" style="border-left:3px solid #f85149;margin-top:12px">
+                        <div style='font-family:IBM Plex Mono,monospace;font-size:12px;
+                                    color:#f85149;margin-bottom:8px'>LEAVER EVENT COMPLETE</div>
+                        <div style='font-size:13px;color:#8b949e'>
+                            User &nbsp;<span style='color:#e6edf3'>{resp.get("username")}</span>
+                            &nbsp;·&nbsp; Status &nbsp;
+                            <span style='color:#f85149'>{resp.get("status")}</span>
+                            &nbsp;·&nbsp; Triggered by &nbsp;
+                            <span style='color:#e6edf3'>Manager</span>
+                        </div>
+                        <div style='font-size:13px;color:#8b949e;margin-top:4px'>
+                            Revoked: <span style='color:#e6edf3'>
+                                {", ".join(resp.get("revoked", []))}
+                            </span>
+                        </div>
+                        <div style='font-size:12px;color:#8b949e;margin-top:4px'>
+                            Reason: {resp.get("reason")}
+                            &nbsp;·&nbsp; Audit entries: {resp.get("audit_entries")}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.error(resp.get("detail", str(resp)))
+
+
 # ══════════════════════════════════════════════════════════════
 #  VIEW 3 — IT ADMIN
 # ══════════════════════════════════════════════════════════════
@@ -582,7 +694,7 @@ elif "IT Admin" in view:
     st.markdown('<div class="nx-title">IT Admin Console</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">User lifecycle · Audit logs · System integrity</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊  Dashboard", "➕  Onboard", "📋  Audit Log", "🔍  Integrity", "⚡  JIT Monitor"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊  Dashboard", "➕  Onboard", "📋  Audit Log", "🔍  Integrity", "⚡  JIT Monitor", "🔎  Orphan Scanner"])
 
     # ── Tab 1: Dashboard ──────────────────────────────────────
     with tab1:
@@ -717,7 +829,30 @@ elif "IT Admin" in view:
                     """, unsafe_allow_html=True)
                     if "warning" in resp:
                         st.warning(resp["warning"])
-                    st.rerun()
+                    st.markdown(f"""
+                    <div class="nx-card" style="margin-top:12px;border-left:3px solid #00d4aa">
+                        <div style='font-family:IBM Plex Mono,monospace;font-size:11px;
+                                    color:#00d4aa;margin-bottom:6px;letter-spacing:0.1em'>
+                            PROVISIONING SUMMARY
+                        </div>
+                        <div style='font-size:13px;color:#8b949e'>
+                            User ID &nbsp;<span style='color:#e6edf3'>{resp.get("user_id")}</span>
+                            &nbsp;·&nbsp;
+                            Username &nbsp;<span style='color:#e6edf3'>{resp.get("username")}</span>
+                            &nbsp;·&nbsp;
+                            Department &nbsp;<span style='color:#e6edf3'>{resp.get("department")}</span>
+                        </div>
+                        <div style='font-size:13px;color:#8b949e;margin-top:6px'>
+                            Status &nbsp;<span style='color:#00d4aa;font-weight:600'>{resp.get("status")}</span>
+                            &nbsp;·&nbsp;
+                            Audit entries written &nbsp;<span style='color:#00d4aa'>{resp.get("audit_entries_written")}</span>
+                        </div>
+                        <div style='margin-top:10px;font-size:12px;color:#8b949e'>
+                            Resources provisioned:
+                        </div>
+                        {_build_provision_html(resp.get("entitlements_provisioned", []))}
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
                     st.error(str(resp.get("detail", resp)))
 
@@ -1021,3 +1156,118 @@ elif "IT Admin" in view:
                 """, unsafe_allow_html=True)
         else:
             st.error("Could not reach API.")
+
+    # ── Tab 6: Orphaned Account Scanner ──────────────────────
+    with tab6:
+        st.markdown('<div class="nx-header">Orphaned account detection</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                Scans for <span style='color:#f85149;font-weight:600'>Active</span>
+                users with no recent audit activity — accounts that were never properly
+                offboarded. These are a leading cause of data breaches and compliance failures.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_days, col_scan, _ = st.columns([1, 1, 4])
+        inactive_days = col_days.number_input(
+            "Flag if inactive for (days)", min_value=1, max_value=365, value=30
+        )
+        run_scan = col_scan.button("Run Scan", type="primary")
+
+        if run_scan:
+            with st.spinner("Scanning all active accounts..."):
+                result = api_get(f"/users/orphaned-check?inactive_days={inactive_days}")
+
+            if isinstance(result, dict) and "error" in result:
+                st.error(f"API error: {result['error']}")
+            else:
+                orphaned = result.get("orphaned", [])
+                clean    = result.get("clean", [])
+
+                # Metrics
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f"""<div class="nx-metric">
+                    <div class="val" style="color:'#f85149' if len(orphaned) else '#00d4aa'">{len(orphaned)}</div>
+                    <div class="lbl">Orphaned accounts</div></div>""", unsafe_allow_html=True)
+                c2.markdown(f"""<div class="nx-metric">
+                    <div class="val">{len(clean)}</div>
+                    <div class="lbl">Clean accounts</div></div>""", unsafe_allow_html=True)
+                c3.markdown(f"""<div class="nx-metric">
+                    <div class="val">{result.get("total_active", 0)}</div>
+                    <div class="lbl">Total scanned</div></div>""", unsafe_allow_html=True)
+
+                st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+
+                if not orphaned:
+                    st.markdown("""
+                    <div class="nx-card" style="text-align:center;padding:40px;border-left:3px solid #00d4aa">
+                        <div style='font-size:28px;margin-bottom:8px'>✓</div>
+                        <div style='color:#00d4aa;font-size:15px;font-weight:600'>No orphaned accounts detected</div>
+                        <div style='color:#8b949e;font-size:13px;margin-top:6px'>
+                            All active users have recent audit activity.
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f'<div class="nx-header" style="color:#f85149">'
+                        f'{len(orphaned)} orphaned account{"s" if len(orphaned) > 1 else ""} found</div>',
+                        unsafe_allow_html=True
+                    )
+
+                    for u in orphaned:
+                        risk_color = "#f85149" if u["risk"] == "HIGH" else "#e3b341"
+                        last_act   = u["last_activity"][:10] if u["last_activity"] else "Never"
+                        days_str   = f"{u['days_inactive']} days" if u["days_inactive"] is not None else "Never active"
+
+                        col1, col2 = st.columns([5, 1])
+                        col1.markdown(f"""
+                        <div class="nx-card" style="border-left:3px solid {risk_color}">
+                            <div style='display:flex;justify-content:space-between;align-items:center'>
+                                <div>
+                                    <div style='font-size:15px;font-weight:600;color:#e6edf3'>
+                                        {u["username"]}
+                                        <span style='font-size:12px;font-weight:400;
+                                               background:{risk_color}22;color:{risk_color};
+                                               padding:2px 10px;border-radius:12px;
+                                               margin-left:8px'>{u["risk"]} RISK</span>
+                                    </div>
+                                    <div style='font-size:12px;color:#8b949e;margin-top:4px;
+                                                font-family:IBM Plex Mono,monospace'>
+                                        {u["department"]} · {u["job_title"]} · {u["email"]}
+                                    </div>
+                                    <div style='font-size:12px;color:#8b949e;margin-top:6px'>
+                                        Last activity:
+                                        <span style='color:{risk_color}'>{last_act}</span>
+                                        &nbsp;·&nbsp; {days_str}
+                                        &nbsp;·&nbsp; {u["reason"]}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        if col2.button("Offboard", key=f"orphan_offboard_{u['id']}"):
+                            with st.spinner(f"Revoking access for {u['username']}..."):
+                                code, resp = api_patch(f"/users/{u['id']}/offboard")
+                            if code == 200:
+                                st.success(
+                                    f"{u['username']} offboarded. "
+                                    f"Revoked: {resp.get('revoked')}"
+                                )
+                                st.rerun()
+                            else:
+                                st.error(resp.get("detail", "Error"))
+
+                if clean:
+                    with st.expander(f"View {len(clean)} clean accounts"):
+                        for u in clean:
+                            st.markdown(
+                                f'<div style="font-size:12px;color:#8b949e;font-family:'
+                                f'IBM Plex Mono,monospace;padding:4px 0">'
+                                f'{u["username"]} · {u["department"]} · '
+                                f'last active {u["days_inactive"]}d ago</div>',
+                                unsafe_allow_html=True
+                            )
