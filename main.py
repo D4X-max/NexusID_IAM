@@ -318,6 +318,63 @@ async def approve_transfer(token: str, manager_id: int,
         "audit_entries"  : len(logs),
     }
 
+# ── Transfer rejection ────────────────────────────────────────
+@app.post("/transfer/{token}/reject", tags=["Lifecycle"])
+async def reject_transfer(
+    token      : str,
+    manager_id : int,
+    reason     : str = "Rejected by manager",
+    db         : Session = Depends(get_db),
+) -> dict:
+    """
+    Manager rejects a pending transfer request.
+    User keeps their current department and access. Audit logged.
+    """
+    request = get_transfer(db, token)
+    if not request:
+        raise HTTPException(status_code=404, detail="Token not found.")
+    if request.status != "PENDING_APPROVAL":
+        raise HTTPException(status_code=409,
+            detail=f"Transfer is already '{request.status}' — cannot reject.")
+    if manager_id != request.approver_id:
+        raise HTTPException(status_code=403,
+            detail=f"Manager ID {manager_id} is not the designated approver.")
+
+    user = get_user(db, request.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {request.user_id} not found.")
+
+    # Mark token as rejected in SQLite
+    resolve_transfer(db, token, "REJECTED")
+
+    # Audit log — user keeps old department, no access changes
+    append_log(
+        db             = db,
+        actor_id       = manager_id,
+        action         = "TRANSFER_REJECTED",
+        target_user_id = request.user_id,
+        outcome        = "Rejected",
+        details        = {
+            "token"          : token,
+            "old_department" : request.old_department,
+            "new_department" : request.new_department,
+            "approver"       : manager_id,
+            "reason"         : reason,
+        },
+    )
+
+    return {
+        "event"          : "TRANSFER_REJECTED",
+        "username"       : user.username,
+        "old_department" : request.old_department,
+        "new_department" : request.new_department,
+        "rejected_by"    : manager_id,
+        "reason"         : reason,
+        "note"           : f"{user.username} keeps their current access in {user.department}.",
+    }
+
+
+
 
 # ── Offboard ──────────────────────────────────────────────────
 @app.patch("/users/{user_id}/offboard", tags=["Lifecycle"])

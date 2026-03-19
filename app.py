@@ -382,7 +382,15 @@ elif "Manager" in view:
                                 st.error(str(resp.get("detail", resp)))
                     with col_r:
                         if st.button("❌ Reject", key=f"reject_{t['token']}"):
-                            st.warning("Rejection endpoint coming in Sprint 4.")
+                            code, resp = api_post(
+                                f"/transfer/{t['token']}/reject",
+                                params={"manager_id": 1, "reason": "Rejected by manager"}
+                            )
+                            if code == 200:
+                                st.warning(f"Rejected. {resp.get('note')}")
+                                st.rerun()
+                            else:
+                                st.error(str(resp.get("detail", resp)))
 
     # ── Tab 2: My team ────────────────────────────────────────
     with tab2:
