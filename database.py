@@ -79,6 +79,27 @@ class PendingTransferDB(Base):
     resolved_at    = Column(DateTime, nullable=True)
 
 
+
+
+# ── Table 4: JIT Access Grants ────────────────────────────────
+class JITAccessDB(Base):
+    """
+    Just-In-Time access grants with automatic expiry.
+    Background thread checks this table every 30s and auto-revokes expired grants.
+    Status values: ACTIVE | EXPIRED | REVOKED_EARLY
+    """
+    __tablename__ = "jit_access"
+
+    id               = Column(Integer,  primary_key=True, index=True)
+    user_id          = Column(Integer,  nullable=False)
+    resource_name    = Column(String,   nullable=False)
+    justification    = Column(String,   nullable=False)
+    duration_minutes = Column(Integer,  nullable=False)
+    granted_at       = Column(DateTime, nullable=False)
+    expires_at       = Column(DateTime, nullable=False)
+    status           = Column(String,   nullable=False, default="ACTIVE")
+    revoked_at       = Column(DateTime, nullable=True)
+
 # ── Hash helpers ──────────────────────────────────────────────
 def _normalize_ts(ts) -> str:
     if isinstance(ts, str):
@@ -213,4 +234,57 @@ def resolve_transfer(db, token, status) -> PendingTransferDB:
     row.resolved_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(row)
+    return row
+
+
+# ── JIT helpers ───────────────────────────────────────────────
+def create_jit_grant(db, user_id, resource_name, justification,
+                     duration_minutes) -> JITAccessDB:
+    from datetime import timedelta
+    now        = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=duration_minutes)
+    row = JITAccessDB(
+        user_id          = user_id,
+        resource_name    = resource_name,
+        justification    = justification,
+        duration_minutes = duration_minutes,
+        granted_at       = now,
+        expires_at       = expires_at,
+        status           = "ACTIVE",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_active_jit_grants(db) -> list:
+    return db.query(JITAccessDB).filter(JITAccessDB.status == "ACTIVE").all()
+
+
+def get_jit_grants_for_user(db, user_id: int) -> list:
+    return db.query(JITAccessDB).filter(JITAccessDB.user_id == user_id).all()
+
+
+def get_all_jit_grants(db) -> list:
+    return db.query(JITAccessDB).order_by(JITAccessDB.granted_at.desc()).all()
+
+
+def expire_jit_grant(db, grant_id: int) -> JITAccessDB:
+    row = db.query(JITAccessDB).filter(JITAccessDB.id == grant_id).first()
+    if row:
+        row.status     = "EXPIRED"
+        row.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def revoke_jit_grant_early(db, grant_id: int) -> JITAccessDB:
+    row = db.query(JITAccessDB).filter(JITAccessDB.id == grant_id).first()
+    if row:
+        row.status     = "REVOKED_EARLY"
+        row.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(row)
     return row

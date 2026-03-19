@@ -206,105 +206,227 @@ if "Employee" in view:
     st.markdown('<div class="nx-title">My Access Portal</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">View your current access and request new resources</div>', unsafe_allow_html=True)
 
-    # Dropdown built from live API data — includes newly hired users
     user_options = {u["id"]: f"{u['username']} ({u['department']})" for u in ALL_USERS}
     user_id = st.selectbox("Select your profile", list(user_options.keys()),
                             format_func=lambda x: user_options[x])
     user = user_map[user_id]
 
     if user["status"] == "Inactive":
-        st.error("⚠️ Your account has been deactivated. Please contact your IT Admin.")
+        st.error("Your account has been deactivated. Please contact your IT Admin.")
         st.stop()
 
-    col1, col2 = st.columns([1, 2])
+    tab1, tab2, tab3 = st.tabs(["My Access", "Request Access", "JIT Access"])
 
-    with col1:
-        st.markdown('<div class="nx-header">Profile</div>', unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="nx-card">
-            <div style='font-size:20px;font-weight:600;color:#e6edf3;margin-bottom:4px'>{user['username']}</div>
-            <div style='font-size:13px;color:#8b949e;margin-bottom:12px'>{user['job_title']}</div>
-            <div style='font-size:12px;color:#8b949e;margin-bottom:6px'>
-                <span style='color:#00d4aa'>dept &nbsp;</span>{user['department']}
-            </div>
-            <div style='font-size:12px;color:#8b949e;margin-bottom:12px'>
-                <span style='color:#00d4aa'>email</span> {user['email']}
-            </div>
-            {status_badge(user['status'])}
-        </div>
-        """, unsafe_allow_html=True)
+    # ── Tab 1: My Access ──────────────────────────────────────
+    with tab1:
+        col1, col2 = st.columns([1, 2])
 
-        st.markdown('<div class="nx-header" style="margin-top:16px">Current Access</div>', unsafe_allow_html=True)
-        entitlements = BIRTHRIGHT.get(user["department"], [])
-        if entitlements:
-            for res in entitlements:
-                st.markdown(f"""
-                <div class="nx-card-accent">
-                    <div style='font-size:13px;color:#e6edf3;font-family:IBM Plex Mono,monospace'>{res}</div>
-                    <div style='font-size:11px;color:#8b949e;margin-top:2px'>Active · Birthright</div>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
+        with col1:
+            st.markdown('<div class="nx-header">Profile</div>', unsafe_allow_html=True)
+            st.markdown(f"""
             <div class="nx-card">
-                <div style='color:#8b949e;font-size:13px'>No defined policy for this department.</div>
+                <div style='font-size:20px;font-weight:600;color:#e6edf3;margin-bottom:4px'>{user['username']}</div>
+                <div style='font-size:13px;color:#8b949e;margin-bottom:12px'>{user['job_title']}</div>
+                <div style='font-size:12px;color:#8b949e;margin-bottom:6px'>
+                    <span style='color:#00d4aa'>dept &nbsp;</span>{user['department']}
+                </div>
+                <div style='font-size:12px;color:#8b949e;margin-bottom:12px'>
+                    <span style='color:#00d4aa'>email</span> {user['email']}
+                </div>
+                {status_badge(user['status'])}
             </div>
             """, unsafe_allow_html=True)
 
-    with col2:
-        st.markdown('<div class="nx-header">Access Request Assistant</div>', unsafe_allow_html=True)
-
-        if not st.session_state.chat_history:
-            st.session_state.chat_history = [
-                {"role": "bot", "text": f"Hi {user['username']}! I can help you request access to resources. What do you need?"}
-            ]
-
-        for msg in st.session_state.chat_history:
-            if msg["role"] == "user":
-                st.markdown(f'<div class="chat-label" style="text-align:right">YOU</div>'
-                            f'<div class="chat-msg-user">{msg["text"]}</div>', unsafe_allow_html=True)
+            st.markdown('<div class="nx-header" style="margin-top:16px">Current Access</div>', unsafe_allow_html=True)
+            entitlements = BIRTHRIGHT.get(user["department"], [])
+            if entitlements:
+                for res in entitlements:
+                    st.markdown(f"""
+                    <div class="nx-card-accent">
+                        <div style='font-size:13px;color:#e6edf3;font-family:IBM Plex Mono,monospace'>{res}</div>
+                        <div style='font-size:11px;color:#8b949e;margin-top:2px'>Active · Birthright</div>
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="chat-label">NEXUS</div>'
-                            f'<div class="chat-msg-bot">{msg["text"]}</div>', unsafe_allow_html=True)
+                st.markdown('<div class="nx-card"><div style="color:#8b949e;font-size:13px">No defined policy.</div></div>', unsafe_allow_html=True)
 
-        st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
-
-        with st.form("chat_form", clear_on_submit=True):
-            col_i, col_b = st.columns([4, 1])
-            user_input = col_i.text_input("message",
-                                           placeholder="e.g. I need access to Salesforce...",
-                                           label_visibility="collapsed")
-            submitted = col_b.form_submit_button("Send")
-
-        if submitted and user_input:
-            st.session_state.chat_history.append({"role": "user", "text": user_input})
-            text_lower       = user_input.lower()
-            matched_resource = next((v for k, v in RESOURCE_MAP.items() if k in text_lower), None)
-
-            if matched_resource:
-                code, resp = api_post("/request-access", {
-                    "user_id"      : user_id,
-                    "resource_name": matched_resource,
-                    "justification": user_input,
-                    "request_type" : "Grant",
-                })
-                status = resp.get("status", "ERROR")
-                risk   = resp.get("risk_score", "N/A")
-                level  = resp.get("risk_level", "")
-                if status == "APPROVED":
-                    bot_reply = f"✅ Access to <b>{matched_resource}</b> approved. Risk score: {risk} ({level})."
-                elif status == "FLAGGED":
-                    bot_reply = f"⚠️ <b>{matched_resource}</b> flagged for manager review. Risk: {risk} ({level})."
-                elif status == "BLOCKED":
-                    bot_reply = f"🚫 <b>{matched_resource}</b> blocked. Risk: {risk} ({level}). Contact IT Admin if needed."
+        with col2:
+            st.markdown('<div class="nx-header">Access Request Assistant</div>', unsafe_allow_html=True)
+            if not st.session_state.chat_history:
+                st.session_state.chat_history = [
+                    {"role": "bot", "text": f"Hi {user['username']}! I can help you request access to resources. What do you need?"}
+                ]
+            for msg in st.session_state.chat_history:
+                if msg["role"] == "user":
+                    st.markdown(f'<div class="chat-label" style="text-align:right">YOU</div>'
+                                f'<div class="chat-msg-user">{msg["text"]}</div>', unsafe_allow_html=True)
                 else:
-                    bot_reply = f"Something went wrong: {resp.get('detail', str(resp))}"
-            else:
-                bot_reply = ("I can help with: GitHub, Salesforce, AWS, Slack, or Workday. "
-                             "Try: <i>'I need access to GitHub'</i>")
+                    st.markdown(f'<div class="chat-label">NEXUS</div>'
+                                f'<div class="chat-msg-bot">{msg["text"]}</div>', unsafe_allow_html=True)
 
-            st.session_state.chat_history.append({"role": "bot", "text": bot_reply})
+            st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
+            with st.form("chat_form", clear_on_submit=True):
+                col_i, col_b = st.columns([4, 1])
+                user_input = col_i.text_input("message", placeholder="e.g. I need access to Salesforce...",
+                                               label_visibility="collapsed")
+                submitted = col_b.form_submit_button("Send")
+
+            if submitted and user_input:
+                st.session_state.chat_history.append({"role": "user", "text": user_input})
+                text_lower       = user_input.lower()
+                matched_resource = next((v for k, v in RESOURCE_MAP.items() if k in text_lower), None)
+                if matched_resource:
+                    code, resp = api_post("/request-access", {
+                        "user_id"      : user_id,
+                        "resource_name": matched_resource,
+                        "justification": user_input,
+                        "request_type" : "Grant",
+                    })
+                    status = resp.get("status", "ERROR")
+                    risk   = resp.get("risk_score", "N/A")
+                    level  = resp.get("risk_level", "")
+                    if status == "APPROVED":
+                        bot_reply = f"Access to <b>{matched_resource}</b> approved. Risk score: {risk} ({level})."
+                    elif status == "FLAGGED":
+                        bot_reply = f"<b>{matched_resource}</b> flagged for manager review. Risk: {risk} ({level})."
+                    elif status == "BLOCKED":
+                        bot_reply = f"<b>{matched_resource}</b> blocked. Risk: {risk} ({level}). Contact IT Admin if needed."
+                    else:
+                        bot_reply = f"Something went wrong: {resp.get('detail', str(resp))}"
+                else:
+                    bot_reply = "I can help with: GitHub, Salesforce, AWS, Slack, or Workday. Try: <i>'I need access to GitHub'</i>"
+                st.session_state.chat_history.append({"role": "bot", "text": bot_reply})
+                st.rerun()
+
+    # ── Tab 2: Request Access (standalone form) ───────────────
+    with tab2:
+        st.markdown('<div class="nx-header">Request access to a resource</div>', unsafe_allow_html=True)
+        with st.form("access_form"):
+            req_resource = st.selectbox("Resource", list(RESOURCE_MAP.values()) + ["AWS_Root"])
+            req_just     = st.text_input("Justification", placeholder="e.g. Need for Q3 project")
+            req_submit   = st.form_submit_button("Submit Request")
+        if req_submit:
+            code, resp = api_post("/request-access", {
+                "user_id"      : user_id,
+                "resource_name": req_resource,
+                "justification": req_just,
+                "request_type" : "Grant",
+            })
+            status = resp.get("status", "ERROR")
+            risk   = resp.get("risk_score", "N/A")
+            level  = resp.get("risk_level", "")
+            if status == "APPROVED":
+                st.success(f"Approved. Risk score: {risk} ({level})")
+            elif status == "BLOCKED":
+                st.error(f"Blocked — anomaly detected. Risk: {risk} ({level})")
+            elif status == "FLAGGED":
+                st.warning(f"Flagged for manager review. Risk: {risk} ({level})")
+            else:
+                st.error(resp.get("detail", str(resp)))
+
+    # ── Tab 3: JIT Access ─────────────────────────────────────
+    with tab3:
+        st.markdown('<div class="nx-header">Just-in-time elevated access</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                Request temporary access to sensitive resources. Access
+                <span style='color:#f85149;font-weight:600'>auto-revokes</span>
+                when the timer expires. Follows Zero Trust: no standing privileges.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.form("jit_form"):
+            jit_resource = st.selectbox("Resource", [
+                "AWS_Root", "GitHub_Repo_Access", "Salesforce_Read_Only",
+                "Workday_Basic", "AWS_Sandbox",
+            ])
+            jit_duration = st.slider("Duration (minutes)", min_value=1, max_value=120, value=30, step=1)
+            jit_just     = st.text_input("Justification", placeholder="e.g. Hotfix deploy to production")
+            jit_submit   = st.form_submit_button("Request JIT Access")
+
+        if jit_submit:
+            if not jit_just:
+                st.warning("Please provide a justification.")
+            else:
+                code, resp = api_post("/jit/request", params={
+                    "user_id"         : user_id,
+                    "resource_name"   : jit_resource,
+                    "justification"   : jit_just,
+                    "duration_minutes": jit_duration,
+                })
+                if code == 200:
+                    st.success(f"JIT access granted to {jit_resource}!")
+                    st.markdown(f"""
+                    <div class="nx-card-accent">
+                        <div style='font-family:IBM Plex Mono,monospace;font-size:12px;
+                                    color:#00d4aa;margin-bottom:8px'>JIT GRANT ACTIVE</div>
+                        <div style='font-size:13px;color:#8b949e'>
+                            Resource: <span style='color:#e6edf3'>{resp.get('resource')}</span>
+                            &nbsp;·&nbsp; Expires in:
+                            <span style='color:#e3b341'>{resp.get('duration_minutes')} min</span>
+                        </div>
+                        <div style='font-size:12px;color:#8b949e;margin-top:4px'>
+                            Risk: <span style='color:#e6edf3'>{resp.get('risk_score')}</span>
+                            ({resp.get('risk_level')})
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    st.rerun()
+                else:
+                    st.error(resp.get("detail", "Error"))
+
+        st.markdown('<div class="nx-header" style="margin-top:24px">Active JIT grants</div>', unsafe_allow_html=True)
+        if st.button("Refresh", key="refresh_jit"):
             st.rerun()
+
+        grants = api_get("/jit/grants")
+        if isinstance(grants, list):
+            my_grants = [g for g in grants if g["user_id"] == user_id]
+            active    = [g for g in my_grants if g["status"] == "ACTIVE"]
+            past      = [g for g in my_grants if g["status"] != "ACTIVE"]
+
+            if not active:
+                st.markdown('<div class="nx-card" style="text-align:center;padding:30px"><div style="color:#8b949e;font-size:13px">No active JIT grants</div></div>', unsafe_allow_html=True)
+            else:
+                for g in active:
+                    secs      = g.get("seconds_remaining", 0)
+                    mins      = secs // 60
+                    secs_rem  = secs % 60
+                    pct       = max(0, min(100, int(secs / (g["duration_minutes"] * 60) * 100))) if g["duration_minutes"] > 0 else 0
+                    bar_color = "#00d4aa" if pct > 50 else "#e3b341" if pct > 20 else "#f85149"
+                    col1, col2 = st.columns([4, 1])
+                    col1.markdown(f"""
+                    <div class="nx-card" style="border-left:3px solid {bar_color}">
+                        <div style='display:flex;justify-content:space-between;align-items:center'>
+                            <div>
+                                <div style='font-size:14px;font-weight:600;color:#e6edf3'>{g['resource_name']}</div>
+                                <div style='font-size:12px;color:#8b949e;margin-top:4px'>{g['justification']}</div>
+                            </div>
+                            <div style='text-align:right'>
+                                <div style='font-family:IBM Plex Mono,monospace;font-size:20px;font-weight:600;color:{bar_color}'>{mins:02d}:{secs_rem:02d}</div>
+                                <div style='font-size:11px;color:#8b949e'>remaining</div>
+                            </div>
+                        </div>
+                        <div style='margin-top:12px;background:#0f0f1a;border-radius:4px;height:4px;overflow:hidden'>
+                            <div style='width:{pct}%;height:100%;background:{bar_color};border-radius:4px'></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if col2.button("Revoke", key=f"revoke_jit_{g['id']}"):
+                        code, resp = api_post(f"/jit/{g['id']}/revoke")
+                        if code == 200:
+                            st.success("JIT grant revoked.")
+                            st.rerun()
+                        else:
+                            st.error(resp.get("detail", "Error"))
+
+            if past:
+                st.markdown('<div class="nx-header" style="margin-top:16px">Past grants</div>', unsafe_allow_html=True)
+                for g in past:
+                    sc = "#f85149" if g["status"] == "EXPIRED" else "#e3b341"
+                    st.markdown(f'<div class="nx-card" style="opacity:0.6;border-left:3px solid {sc}"><div style="font-size:13px;color:#8b949e;font-family:IBM Plex Mono,monospace">{g["resource_name"]} &nbsp;·&nbsp; <span style="color:{sc}">{g["status"]}</span> &nbsp;·&nbsp; {g["granted_at"][:16].replace("T"," ")}</div></div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -460,7 +582,7 @@ elif "IT Admin" in view:
     st.markdown('<div class="nx-title">IT Admin Console</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">User lifecycle · Audit logs · System integrity</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊  Dashboard", "➕  Onboard", "📋  Audit Log", "🔍  Integrity"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊  Dashboard", "➕  Onboard", "📋  Audit Log", "🔍  Integrity", "⚡  JIT Monitor"])
 
     # ── Tab 1: Dashboard ──────────────────────────────────────
     with tab1:
@@ -716,3 +838,132 @@ elif "IT Admin" in view:
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
+
+    # ── Tab 5: JIT Monitor ───────────────────────────────────
+    with tab5:
+        st.markdown('<div class="nx-header">JIT access monitor — all users</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                Real-time view of all Just-In-Time access grants across the organisation.
+                Active grants auto-revoke when their timer expires.
+                Use early revoke if a session needs to be terminated immediately.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button("Refresh", key="refresh_jit_admin"):
+            st.rerun()
+
+        grants = api_get("/jit/grants")
+        user_map_jit = {u["id"]: u["username"] for u in ALL_USERS}
+
+        if isinstance(grants, list):
+            active_grants  = [g for g in grants if g["status"] == "ACTIVE"]
+            expired_grants = [g for g in grants if g["status"] != "ACTIVE"]
+
+            # Metrics
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"""<div class="nx-metric">
+                <div class="val">{len(active_grants)}</div>
+                <div class="lbl">Active JIT grants</div></div>""", unsafe_allow_html=True)
+            c2.markdown(f"""<div class="nx-metric">
+                <div class="val">{len(expired_grants)}</div>
+                <div class="lbl">Expired / revoked</div></div>""", unsafe_allow_html=True)
+            c3.markdown(f"""<div class="nx-metric">
+                <div class="val">{len(grants)}</div>
+                <div class="lbl">Total grants</div></div>""", unsafe_allow_html=True)
+
+            st.markdown('<div class="nx-header" style="margin-top:24px">Active grants</div>',
+                        unsafe_allow_html=True)
+
+            if not active_grants:
+                st.markdown("""
+                <div class="nx-card" style="text-align:center;padding:30px">
+                    <div style='color:#8b949e;font-size:13px'>No active JIT grants</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                for g in active_grants:
+                    secs      = g.get("seconds_remaining", 0)
+                    mins      = secs // 60
+                    secs_rem  = secs % 60
+                    pct       = max(0, min(100, int(secs / (g["duration_minutes"] * 60) * 100)))
+                    bar_color = "#00d4aa" if pct > 50 else "#e3b341" if pct > 20 else "#f85149"
+                    username  = user_map_jit.get(g["user_id"], f"user:{g['user_id']}")
+
+                    col1, col2 = st.columns([5, 1])
+                    col1.markdown(f"""
+                    <div class="nx-card" style="border-left:3px solid {bar_color}">
+                        <div style='display:flex;justify-content:space-between;align-items:center'>
+                            <div>
+                                <div style='font-size:14px;font-weight:600;color:#e6edf3'>
+                                    {username} → {g['resource_name']}
+                                </div>
+                                <div style='font-size:12px;color:#8b949e;margin-top:4px'>
+                                    {g['justification']}
+                                </div>
+                                <div style='font-size:11px;color:#8b949e;margin-top:4px;
+                                            font-family:IBM Plex Mono,monospace'>
+                                    Granted: {g['granted_at'][:16].replace('T',' ')}
+                                    &nbsp;·&nbsp;
+                                    Expires: {g['expires_at'][:16].replace('T',' ')}
+                                </div>
+                            </div>
+                            <div style='text-align:right;min-width:80px'>
+                                <div style='font-family:IBM Plex Mono,monospace;font-size:22px;
+                                            font-weight:600;color:{bar_color}'>
+                                    {mins:02d}:{secs_rem:02d}
+                                </div>
+                                <div style='font-size:11px;color:#8b949e'>remaining</div>
+                            </div>
+                        </div>
+                        <div style='margin-top:10px;background:#0f0f1a;
+                                    border-radius:4px;height:4px;overflow:hidden'>
+                            <div style='width:{pct}%;height:100%;
+                                        background:{bar_color};border-radius:4px'></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    if col2.button("Force Revoke", key=f"admin_revoke_jit_{g['id']}"):
+                        code, resp = api_post(f"/jit/{g['id']}/revoke")
+                        if code == 200:
+                            st.success("JIT grant force-revoked.")
+                            st.rerun()
+                        else:
+                            st.error(resp.get("detail", "Error"))
+
+            if expired_grants:
+                st.markdown('<div class="nx-header" style="margin-top:24px">Grant history</div>',
+                            unsafe_allow_html=True)
+                rows_html = ""
+                for g in expired_grants[:20]:
+                    username  = user_map_jit.get(g["user_id"], f"user:{g['user_id']}")
+                    sc = "#f85149" if g["status"] == "EXPIRED" else "#e3b341"
+                    rows_html += (
+                        f"<tr>"
+                        f"<td><code style='font-size:11px;color:#8b949e'>{g['id']}</code></td>"
+                        f"<td style='font-size:12px;color:#e6edf3'>{username}</td>"
+                        f"<td style='font-family:IBM Plex Mono,monospace;font-size:12px;color:#8b949e'>"
+                        f"{g['resource_name']}</td>"
+                        f"<td style='font-size:12px;color:#8b949e'>{g['duration_minutes']}m</td>"
+                        f"<td style='font-family:IBM Plex Mono,monospace;font-size:12px;color:{sc}'>"
+                        f"{g['status']}</td>"
+                        f"<td style='font-size:12px;color:#8b949e'>"
+                        f"{g['granted_at'][:16].replace('T',' ')}</td>"
+                        f"</tr>"
+                    )
+                st.markdown(f"""
+                <div style='overflow-x:auto'>
+                <table class="nx-table">
+                    <thead><tr>
+                        <th>#</th><th>User</th><th>Resource</th>
+                        <th>Duration</th><th>Status</th><th>Granted at</th>
+                    </tr></thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.error("Could not reach API.")

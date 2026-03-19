@@ -19,6 +19,8 @@ from database import (
     create_transfer, get_transfer, resolve_transfer, PendingTransferDB,
     get_all_users, get_user, upsert_user,
     update_user_status, update_user_department, UserDB,
+    create_jit_grant, get_active_jit_grants, get_all_jit_grants,
+    expire_jit_grant, revoke_jit_grant_early, JITAccessDB,
 )
 from simulated_connectors.mock_engine import mock_api_call
 
@@ -26,7 +28,7 @@ from simulated_connectors.mock_engine import mock_api_call
 app = FastAPI(
     title="NexusID API",
     description="Unified IAM — Joiner / Mover / Leaver. All state persisted to SQLite.",
-    version="0.7.0",
+    version="0.8.0",
 )
 
 
@@ -191,7 +193,7 @@ async def trigger_leaver_kill_switch(user: UserDB, entitlements: list[str],
 # ── Health ────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 def root():
-    return {"message": "NexusID API is live", "version": "0.7.0",
+    return {"message": "NexusID API is live", "version": "0.8.0",
             "storage": "SQLite (users + transfers + audit)"}
 
 
@@ -212,10 +214,17 @@ async def hire_user(new_user: User, db: Session = Depends(get_db)) -> dict:
      "department":"Engineering","job_title":"SRE","manager_id":1,"status":"Pending"}
     ```
     """
-    if get_user(db, new_user.id):
-        raise HTTPException(status_code=409, detail=f"User ID {new_user.id} already exists.")
     if new_user.status != "Pending":
         raise HTTPException(status_code=422, detail="New hires must arrive with status 'Pending'.")
+
+    existing = get_user(db, new_user.id)
+    if existing and existing.status in ("Active", "Pending"):
+        raise HTTPException(status_code=409,
+            detail=f"User ID {new_user.id} already exists and is '{existing.status}'. "
+                   f"Offboard them first before re-hiring.")
+
+    # Re-hire path: user exists but is Inactive (e.g. contractor returning)
+    is_rehire = existing is not None and existing.status == "Inactive"
 
     db_user = upsert_user(
         db, id=new_user.id, username=new_user.username, email=new_user.email,
@@ -228,7 +237,7 @@ async def hire_user(new_user: User, db: Session = Depends(get_db)) -> dict:
     update_user_status(db, db_user.id, final_st)
 
     resp = {
-        "event"                   : "HIRE",
+        "event"                   : "REHIRE" if is_rehire else "HIRE",
         "user_id"                 : db_user.id,
         "username"                : db_user.username,
         "department"              : db_user.department,
@@ -237,6 +246,8 @@ async def hire_user(new_user: User, db: Session = Depends(get_db)) -> dict:
         "audit_entries_written"   : len(logs),
         "timestamp"               : datetime.now(timezone.utc).isoformat(),
     }
+    if is_rehire:
+        resp["note"] = "User was previously offboarded and has been re-hired. Full audit trail preserved."
     if new_user.department not in BIRTHRIGHT_POLICIES:
         resp["warning"] = (f"No policy for '{new_user.department}'. "
                            f"PENDING_APPROVAL logged. IT admin action required.")
@@ -510,3 +521,190 @@ def get_audit_log(db: Session = Depends(get_db)) -> list:
 def verify_integrity(db: Session = Depends(get_db)) -> dict:
     """SHA-256 tamper detection across all audit rows."""
     return verify_log_integrity(db)
+
+
+# ── JIT background expiry task ────────────────────────────────
+async def jit_expiry_worker():
+    """
+    Runs every 30 seconds. Checks for expired JIT grants and
+    auto-revokes them via the kill switch. This is the
+    'self-destructing' mechanism — no human needed.
+    """
+    while True:
+        await asyncio.sleep(30)
+        db = SessionLocal()
+        try:
+            now    = datetime.now(timezone.utc)
+            active = get_active_jit_grants(db)
+            for grant in active:
+                expires = grant.expires_at
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                if now >= expires:
+                    user = get_user(db, grant.user_id)
+                    if user:
+                        # Revoke the specific resource
+                        response = await simulate_provisioning(
+                            user.email, grant.resource_name, "revoke"
+                        )
+                        response["action_taken"] = "JIT_AUTO_REVOKE"
+                        response["jit_grant_id"] = grant.id
+
+                        append_log(
+                            db             = db,
+                            actor_id       = 0,
+                            action         = "JIT_EXPIRED",
+                            target_user_id = grant.user_id,
+                            outcome        = "Success",
+                            details        = {
+                                "resource_name"   : grant.resource_name,
+                                "duration_minutes": grant.duration_minutes,
+                                "granted_at"      : grant.granted_at.isoformat(),
+                                "expires_at"      : grant.expires_at.isoformat(),
+                                "jit_grant_id"    : grant.id,
+                            },
+                        )
+                        expire_jit_grant(db, grant.id)
+        except Exception as e:
+            pass  # Never crash the background worker
+        finally:
+            db.close()
+
+
+@app.on_event("startup")
+async def start_jit_worker():
+    asyncio.create_task(jit_expiry_worker())
+
+
+# ── JIT: request elevated access ─────────────────────────────
+@app.post("/jit/request", tags=["JIT"])
+async def request_jit_access(
+    user_id          : int,
+    resource_name    : str,
+    justification    : str,
+    duration_minutes : int = 60,
+    db               : Session = Depends(get_db),
+) -> dict:
+    """
+    Request Just-In-Time elevated access for a limited time window.
+    Access automatically revokes when the timer expires.
+
+    Example:
+        POST /jit/request?user_id=1&resource_name=AWS_Root&justification=Hotfix+deploy&duration_minutes=30
+    """
+    user = get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
+    if user.status != "Active":
+        raise HTTPException(status_code=403, detail="Only Active users can request JIT access.")
+    if duration_minutes < 1 or duration_minutes > 480:
+        raise HTTPException(status_code=422, detail="Duration must be between 1 and 480 minutes.")
+
+    # Run risk assessment — JIT is always for elevated/sensitive resources
+    risk = assess_request(department=user.department, resource_name=resource_name)
+
+    # Provision access
+    response = await simulate_provisioning(user.email, resource_name, "grant")
+
+    # Create JIT grant record in SQLite
+    grant = create_jit_grant(
+        db               = db,
+        user_id          = user_id,
+        resource_name    = resource_name,
+        justification    = justification,
+        duration_minutes = duration_minutes,
+    )
+
+    # Audit log
+    append_log(
+        db             = db,
+        actor_id       = user_id,
+        action         = "JIT_GRANTED",
+        target_user_id = user_id,
+        outcome        = "Success",
+        details        = {
+            "resource_name"   : resource_name,
+            "duration_minutes": duration_minutes,
+            "expires_at"      : grant.expires_at.isoformat(),
+            "risk_score"      : risk["score"],
+            "risk_level"      : risk["level"],
+            "jit_grant_id"    : grant.id,
+            "justification"   : justification,
+        },
+    )
+
+    return {
+        "event"            : "JIT_GRANTED",
+        "grant_id"         : grant.id,
+        "user"             : user.username,
+        "resource"         : resource_name,
+        "duration_minutes" : duration_minutes,
+        "granted_at"       : grant.granted_at.isoformat(),
+        "expires_at"       : grant.expires_at.isoformat(),
+        "risk_score"       : risk["score"],
+        "risk_level"       : risk["level"],
+        "note"             : f"Access will auto-revoke in {duration_minutes} minutes.",
+    }
+
+
+# ── JIT: early revoke ─────────────────────────────────────────
+@app.post("/jit/{grant_id}/revoke", tags=["JIT"])
+async def revoke_jit_early(
+    grant_id : int,
+    db       : Session = Depends(get_db),
+) -> dict:
+    """Manually revoke a JIT grant before it expires."""
+    grant = db.query(JITAccessDB).filter(JITAccessDB.id == grant_id).first()
+    if not grant:
+        raise HTTPException(status_code=404, detail=f"JIT grant {grant_id} not found.")
+    if grant.status != "ACTIVE":
+        raise HTTPException(status_code=409, detail=f"Grant is already '{grant.status}'.")
+
+    user     = get_user(db, grant.user_id)
+    response = await simulate_provisioning(user.email, grant.resource_name, "revoke")
+
+    revoke_jit_grant_early(db, grant_id)
+    append_log(
+        db             = db,
+        actor_id       = grant.user_id,
+        action         = "JIT_REVOKED_EARLY",
+        target_user_id = grant.user_id,
+        outcome        = "Success",
+        details        = {
+            "resource_name": grant.resource_name,
+            "jit_grant_id" : grant_id,
+            "reason"       : "Manually revoked before expiry",
+        },
+    )
+
+    return {
+        "event"    : "JIT_REVOKED_EARLY",
+        "grant_id" : grant_id,
+        "resource" : grant.resource_name,
+        "user"     : user.username,
+    }
+
+
+# ── JIT: list all grants ──────────────────────────────────────
+@app.get("/jit/grants", tags=["JIT"])
+def get_jit_grants(db: Session = Depends(get_db)) -> list:
+    """Returns all JIT grants — active, expired, and early-revoked."""
+    grants = get_all_jit_grants(db)
+    now    = datetime.now(timezone.utc)
+    return [
+        {
+            "id"              : g.id,
+            "user_id"         : g.user_id,
+            "resource_name"   : g.resource_name,
+            "justification"   : g.justification,
+            "duration_minutes": g.duration_minutes,
+            "granted_at"      : g.granted_at.isoformat(),
+            "expires_at"      : g.expires_at.isoformat(),
+            "status"          : g.status,
+            "revoked_at"      : g.revoked_at.isoformat() if g.revoked_at else None,
+            "seconds_remaining": max(0, int(
+                (g.expires_at.replace(tzinfo=timezone.utc) - now).total_seconds()
+            )) if g.status == "ACTIVE" else 0,
+        }
+        for g in grants
+    ]
