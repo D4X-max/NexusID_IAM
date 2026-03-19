@@ -839,9 +839,54 @@ elif "IT Admin" in view:
             """, unsafe_allow_html=True)
 
         st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
-        st.markdown('<div class="nx-header">All users</div>', unsafe_allow_html=True)
 
-        for u in ALL_USERS:
+        # ── Search + filter bar ───────────────────────────────
+        src_col1, src_col2, src_col3 = st.columns([3, 2, 1])
+        search_query  = src_col1.text_input(
+            "search", placeholder="Search by name, email, department, job title...",
+            label_visibility="collapsed"
+        )
+        status_filter = src_col2.selectbox(
+            "status", ["All statuses", "Active", "Inactive", "Pending"],
+            label_visibility="collapsed"
+        )
+        dept_options  = ["All departments"] + sorted({u["department"] for u in ALL_USERS})
+        dept_filter   = src_col3.selectbox(
+            "dept", dept_options, label_visibility="collapsed"
+        )
+
+        # Apply filters
+        filtered_users = ALL_USERS
+        if search_query:
+            q = search_query.lower()
+            filtered_users = [
+                u for u in filtered_users
+                if q in u["username"].lower()
+                or q in u.get("email","").lower()
+                or q in u["department"].lower()
+                or q in u.get("job_title","").lower()
+            ]
+        if status_filter != "All statuses":
+            filtered_users = [u for u in filtered_users if u["status"] == status_filter]
+        if dept_filter != "All departments":
+            filtered_users = [u for u in filtered_users if u["department"] == dept_filter]
+
+        # Result count
+        st.markdown(
+            f'<div class="nx-header">All users &nbsp;'
+            f'<span style="color:#8b949e;font-weight:400;font-size:11px">'
+            f'showing {len(filtered_users)} of {len(ALL_USERS)}</span></div>',
+            unsafe_allow_html=True
+        )
+
+        if not filtered_users:
+            st.markdown("""
+            <div class="nx-card" style="text-align:center;padding:30px">
+                <div style='color:#8b949e;font-size:13px'>No users match your search.</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        for u in filtered_users:
             is_inactive  = u["status"] == "Inactive"
             ent_list     = [] if is_inactive else BIRTHRIGHT.get(u["department"], [])
             ent_html     = " ".join([
@@ -858,7 +903,7 @@ elif "IT Admin" in view:
                     {status_badge(u['status'])}
                 </div>
                 <div style='font-size:12px;color:#8b949e;font-family:IBM Plex Mono,monospace;margin-bottom:8px'>
-                    ID: {u['id']} · {u['department']} · {u['job_title']}
+                    ID: {u['id']} · {u['department']} · {u['job_title']} · {u.get('email','')}
                 </div>
                 <div>{ent_html if ent_html else "<span style='font-size:12px;color:#8b949e'>No active entitlements</span>"}</div>
             </div>
