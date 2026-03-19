@@ -143,6 +143,15 @@ def status_badge(status):
     return f'<span class="{cls}">{status}</span>'
 
 
+def _build_provision_html(items):
+    """Build provisioned resources list — no backslash in f-string needed."""
+    return "".join(
+        "<div style='margin-top:4px;font-family:IBM Plex Mono,monospace;"
+        "font-size:12px;color:#e6edf3'>&#10003; &nbsp;" + r + "</div>"
+        for r in items
+    )
+
+
 # ── Live user fetch — source of truth is the API ──────────────
 def get_live_users():
     """
@@ -465,7 +474,7 @@ elif "Manager" in view:
     st.markdown('<div class="nx-title">Manager Portal</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">Approve access requests · View your team</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["✅  Pending Approvals", "👥  My Team", "🔄  Request Transfer", "🚪  Initiate Leaver"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["✅  Pending Approvals", "👥  My Team", "🔄  Request Transfer", "🚪  Initiate Leaver", "📋  Access Review"])
 
     # ── Tab 1: Approvals ──────────────────────────────────────
     with tab1:
@@ -687,6 +696,107 @@ elif "Manager" in view:
                     st.error(resp.get("detail", str(resp)))
 
 
+    # ── Tab 5: Access Review ──────────────────────────────────
+    with tab5:
+        st.markdown('<div class="nx-header">Periodic access review — certify your team</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                Review and certify that each team member still needs their current access.
+                Prevents <span style='color:#e3b341;font-weight:600'>access creep</span>
+                — permissions that accumulate silently over time.
+                Uncertified access is flagged for IT Admin review.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_days2, col_run2, col_clear2, _ = st.columns([1, 1, 1, 3])
+        review_days = col_days2.number_input("Review window (days)", min_value=1, max_value=365, value=90)
+
+        if col_run2.button("Load Review", type="primary"):
+            with st.spinner("Loading access review..."):
+                st.session_state.access_review_result = api_get(f"/access-review?review_days={review_days}")
+
+        if col_clear2.button("Clear"):
+            st.session_state.pop("access_review_result", None)
+            st.rerun()
+
+        result = st.session_state.get("access_review_result")
+
+        if result is not None:
+            if isinstance(result, dict) and "error" in result:
+                st.error(f"API error: {result['error']}")
+            else:
+                due        = result.get("due", [])
+                up_to_date = result.get("up_to_date", [])
+
+                c1, c2 = st.columns(2)
+                due_color = "#f85149" if due else "#00d4aa"
+                c1.markdown(f"""<div class="nx-metric">
+                    <div class="val" style="color:{due_color}">{len(due)}</div>
+                    <div class="lbl">Require review</div></div>""", unsafe_allow_html=True)
+                c2.markdown(f"""<div class="nx-metric">
+                    <div class="val">{len(up_to_date)}</div>
+                    <div class="lbl">Up to date</div></div>""", unsafe_allow_html=True)
+
+                if not due:
+                    st.markdown("""
+                    <div class="nx-card" style="text-align:center;padding:30px;border-left:3px solid #00d4aa">
+                        <div style='color:#00d4aa;font-size:15px;font-weight:600'>All access is certified</div>
+                        <div style='color:#8b949e;font-size:13px;margin-top:6px'>No reviews overdue.</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="nx-header" style="margin-top:20px;color:#e3b341">{len(due)} user(s) require access certification</div>', unsafe_allow_html=True)
+
+                    for u in due:
+                        ent_list  = u.get("entitlements", [])
+                        last_rev  = u.get("last_review", "Never")[:10] if u.get("last_review") else "Never"
+                        days_info = f"{u['days_since']} days ago" if u.get("days_since") else "Never reviewed"
+
+                        col1, col2, col3 = st.columns([4, 1, 1])
+                        col1.markdown(f"""
+                        <div class="nx-card" style="border-left:3px solid #e3b341">
+                            <div style='font-size:14px;font-weight:600;color:#e6edf3'>{u['username']}</div>
+                            <div style='font-size:12px;color:#8b949e;margin-top:4px;font-family:IBM Plex Mono,monospace'>
+                                {u['department']} · {u['job_title']} · Last review: {last_rev} ({days_info})
+                            </div>
+                            <div style='font-size:12px;color:#8b949e;margin-top:6px'>
+                                Access: <span style='color:#e6edf3'>{", ".join(ent_list) if ent_list else "None"}</span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        if col2.button("Certify", key=f"certify_{u['id']}"):
+                            code, resp = api_post(
+                                f"/access-review/{u['id']}/certify",
+                                params={"manager_id": 1, "action": "CERTIFY"}
+                            )
+                            if code == 200:
+                                st.success(f"Certified {u['username']}.")
+                                # Refresh stored result so list updates without clearing
+                                st.session_state.access_review_result = api_get(
+                                    f"/access-review?review_days={review_days}"
+                                )
+                                st.rerun()
+                            else:
+                                st.error(resp.get("detail", "Error"))
+
+                        if col3.button("Flag", key=f"flag_{u['id']}"):
+                            code, resp = api_post(
+                                f"/access-review/{u['id']}/certify",
+                                params={"manager_id": 1, "action": "FLAG_FOR_REDUCTION"}
+                            )
+                            if code == 200:
+                                st.warning(f"Flagged {u['username']} for access reduction.")
+                                st.session_state.access_review_result = api_get(
+                                    f"/access-review?review_days={review_days}"
+                                )
+                                st.rerun()
+                            else:
+                                st.error(resp.get("detail", "Error"))
+
+
 # ══════════════════════════════════════════════════════════════
 #  VIEW 3 — IT ADMIN
 # ══════════════════════════════════════════════════════════════
@@ -829,6 +939,7 @@ elif "IT Admin" in view:
                     """, unsafe_allow_html=True)
                     if "warning" in resp:
                         st.warning(resp["warning"])
+                    _prov_html = _build_provision_html(resp.get("entitlements_provisioned", []))
                     st.markdown(f"""
                     <div class="nx-card" style="margin-top:12px;border-left:3px solid #00d4aa">
                         <div style='font-family:IBM Plex Mono,monospace;font-size:11px;
@@ -850,7 +961,7 @@ elif "IT Admin" in view:
                         <div style='margin-top:10px;font-size:12px;color:#8b949e'>
                             Resources provisioned:
                         </div>
-                        {_build_provision_html(resp.get("entitlements_provisioned", []))}
+                        {_prov_html}
                     </div>
                     """, unsafe_allow_html=True)
                 else:
@@ -1249,6 +1360,7 @@ elif "IT Admin" in view:
                         </div>
                         """, unsafe_allow_html=True)
 
+                        col2a, col2b = col2.columns(2) if hasattr(col2, "columns") else (col2, col2)
                         if col2.button("Offboard", key=f"orphan_offboard_{u['id']}"):
                             with st.spinner(f"Revoking access for {u['username']}..."):
                                 code, resp = api_patch(f"/users/{u['id']}/offboard")
@@ -1258,6 +1370,15 @@ elif "IT Admin" in view:
                                     f"Revoked: {resp.get('revoked')}"
                                 )
                                 st.rerun()
+                            else:
+                                st.error(resp.get("detail", "Error"))
+                        if u.get("manager_id") and st.button("Notify Mgr", key=f"notify_{u['id']}"):
+                            code, resp = api_post(
+                                f"/users/{u['id']}/notify-manager",
+                                params={"reason": "Orphaned account detected by scanner"}
+                            )
+                            if code == 200:
+                                st.info(f"Manager notified: {resp.get('notified_manager')}")
                             else:
                                 st.error(resp.get("detail", "Error"))
 

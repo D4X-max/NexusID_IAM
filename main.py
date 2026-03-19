@@ -604,6 +604,181 @@ async def terminate_request(
         "timestamp"    : datetime.now(timezone.utc).isoformat(),
     }
 
+
+# ── Access review workflow ────────────────────────────────────
+@app.get("/access-review", tags=["Access"])
+def get_access_review(
+    review_days: int = 90,
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Returns users whose access has not been reviewed in the last N days.
+    Managers use this to certify their team still needs current access.
+    Prevents access creep — permissions that accumulate silently over time.
+    """
+    from datetime import timedelta
+    cutoff    = datetime.now(timezone.utc) - timedelta(days=review_days)
+    all_users = get_all_users(db)
+    due       = []
+    up_to_date = []
+
+    for user in all_users:
+        if user.status != "Active":
+            continue
+        last_review = (
+            db.query(AuditLogDB)
+            .filter(
+                AuditLogDB.target_user_id == user.id,
+                AuditLogDB.action == "ACCESS_REVIEW_CERTIFIED"
+            )
+            .order_by(AuditLogDB.id.desc())
+            .first()
+        )
+        entitlements = BIRTHRIGHT_POLICIES.get(user.department, [])
+        if last_review is None:
+            days_since = None
+            due.append({
+                "id"          : user.id,
+                "username"    : user.username,
+                "email"       : user.email,
+                "department"  : user.department,
+                "job_title"   : user.job_title,
+                "manager_id"  : user.manager_id,
+                "entitlements": entitlements,
+                "last_review" : None,
+                "days_since"  : None,
+                "reason"      : "Never reviewed",
+            })
+        else:
+            ts = last_review.timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            days_since = (datetime.now(timezone.utc) - ts).days
+            entry = {
+                "id"          : user.id,
+                "username"    : user.username,
+                "email"       : user.email,
+                "department"  : user.department,
+                "job_title"   : user.job_title,
+                "manager_id"  : user.manager_id,
+                "entitlements": entitlements,
+                "last_review" : ts.isoformat(),
+                "days_since"  : days_since,
+            }
+            if ts < cutoff:
+                entry["reason"] = f"Last reviewed {days_since} days ago"
+                due.append(entry)
+            else:
+                up_to_date.append(entry)
+
+    return {
+        "scanned_at"   : datetime.now(timezone.utc).isoformat(),
+        "review_days"  : review_days,
+        "due_count"    : len(due),
+        "clean_count"  : len(up_to_date),
+        "due"          : due,
+        "up_to_date"   : up_to_date,
+    }
+
+
+@app.post("/access-review/{user_id}/certify", tags=["Access"])
+def certify_access(
+    user_id    : int,
+    manager_id : int,
+    action     : str = "CERTIFY",
+    db         : Session = Depends(get_db),
+) -> dict:
+    """
+    Manager certifies a user's current access is appropriate (CERTIFY)
+    or flags it for reduction (FLAG_FOR_REDUCTION).
+
+    action options: "CERTIFY" | "FLAG_FOR_REDUCTION"
+    """
+    user = get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
+    if action not in ("CERTIFY", "FLAG_FOR_REDUCTION"):
+        raise HTTPException(status_code=422,
+            detail="action must be 'CERTIFY' or 'FLAG_FOR_REDUCTION'.")
+
+    entitlements = BIRTHRIGHT_POLICIES.get(user.department, [])
+    outcome      = "Certified" if action == "CERTIFY" else "Flagged"
+
+    append_log(
+        db             = db,
+        actor_id       = manager_id,
+        action         = "ACCESS_REVIEW_CERTIFIED" if action == "CERTIFY" else "ACCESS_REVIEW_FLAGGED",
+        target_user_id = user_id,
+        outcome        = outcome,
+        details        = {
+            "action"      : action,
+            "entitlements": entitlements,
+            "manager_id"  : manager_id,
+            "reviewed_at" : datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    return {
+        "event"       : "ACCESS_REVIEW",
+        "action"      : action,
+        "user_id"     : user_id,
+        "username"    : user.username,
+        "department"  : user.department,
+        "entitlements": entitlements,
+        "reviewed_by" : manager_id,
+        "outcome"     : outcome,
+        "timestamp"   : datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ── Manager notification on orphan detection ──────────────────
+@app.post("/users/{user_id}/notify-manager", tags=["Users"])
+def notify_manager(
+    user_id : int,
+    reason  : str = "Orphaned account detected",
+    db      : Session = Depends(get_db),
+) -> dict:
+    """
+    Sends a simulated notification to the user's manager when an
+    orphaned account is detected. Logged in the audit trail.
+    In production this would trigger a real Slack/email webhook.
+    """
+    user = get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
+    if user.manager_id is None:
+        raise HTTPException(status_code=422,
+            detail=f"User '{user.username}' has no manager assigned.")
+
+    manager = get_user(db, user.manager_id)
+    manager_name = manager.username if manager else f"manager:{user.manager_id}"
+
+    append_log(
+        db             = db,
+        actor_id       = 0,
+        action         = "MANAGER_NOTIFIED",
+        target_user_id = user_id,
+        outcome        = "Success",
+        details        = {
+            "reason"          : reason,
+            "notified_manager": manager_name,
+            "manager_id"      : user.manager_id,
+            "channel"         : "simulated_slack",
+            "message"         : f"Action required: {user.username} flagged — {reason}",
+        },
+    )
+
+    return {
+        "event"            : "MANAGER_NOTIFIED",
+        "user_id"          : user_id,
+        "username"         : user.username,
+        "notified_manager" : manager_name,
+        "manager_id"       : user.manager_id,
+        "reason"           : reason,
+        "channel"          : "simulated_slack",
+        "note"             : "In production this fires a real Slack/email webhook.",
+    }
+
 # ── Orphaned account scanner ──────────────────────────────────
 @app.get("/users/orphaned-check", tags=["Users"])
 def orphaned_check(
