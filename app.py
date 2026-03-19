@@ -6,22 +6,15 @@ Run: streamlit run app.py
 
 import streamlit as st
 import requests
-from datetime import datetime
 
 API = "http://127.0.0.1:8000"
 
-# ── Global constants — defined here so ALL views can access them ──
+# ── Global constants ──────────────────────────────────────────
 BIRTHRIGHT = {
     "Engineering": ["GitHub_Repo_Access", "Slack_Engineering_Channel", "AWS_Sandbox"],
     "Sales":       ["Salesforce_Read_Only", "Slack_Sales_Channel"],
     "HR":          ["Workday_Basic", "Slack_General"],
 }
-
-ALL_USERS = [
-    {"id":1,"username":"dhruv","department":"Engineering","status":"Active","job_title":"Backend Engineer",  "email":"dhruv@company.com"},
-    {"id":2,"username":"priya","department":"Sales",      "status":"Active","job_title":"Account Executive","email":"priya@company.com"},
-    {"id":3,"username":"amit", "department":"HR",         "status":"Active","job_title":"HR Generalist",    "email":"amit@company.com"},
-]
 
 RESOURCE_MAP = {
     "salesforce": "Salesforce_Read_Only",
@@ -61,7 +54,7 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
 }
 .nx-metric {
     background:#0f0f1a; border:1px solid #1e1e30;
-    border-radius:6px; padding:16px; text-align:center;
+    border-radius:6px; padding:16px; text-align:center; margin-bottom:8px;
 }
 .nx-metric .val {
     font-family:'IBM Plex Mono',monospace; font-size:32px;
@@ -82,10 +75,12 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
 .nx-title { font-size:24px; font-weight:600; color:#e6edf3; margin-bottom:4px; }
 .nx-sub   { font-size:13px; color:#8b949e; margin-bottom:24px; }
 .nx-table { width:100%; border-collapse:collapse; font-size:13px; }
-.nx-table th { background:#0f0f1a;color:#8b949e;font-family:'IBM Plex Mono',monospace;
-               font-size:11px;letter-spacing:0.08em;text-transform:uppercase;
-               padding:10px 14px;text-align:left;border-bottom:1px solid #21213a; }
-.nx-table td { padding:10px 14px;border-bottom:1px solid #1a1a28;color:#c9d1d9; }
+.nx-table th {
+    background:#0f0f1a; color:#8b949e; font-family:'IBM Plex Mono',monospace;
+    font-size:11px; letter-spacing:0.08em; text-transform:uppercase;
+    padding:10px 14px; text-align:left; border-bottom:1px solid #21213a;
+}
+.nx-table td { padding:10px 14px; border-bottom:1px solid #1a1a28; color:#c9d1d9; }
 .nx-table tr:hover td { background:#1a1a28; }
 div.stButton > button {
     background:#161622; color:#00d4aa; border:1px solid #00d4aa44;
@@ -93,12 +88,11 @@ div.stButton > button {
     font-size:12px; letter-spacing:0.05em; padding:8px 20px;
 }
 div.stButton > button:hover { background:#00d4aa15; border-color:#00d4aa; }
-div.stButton > button[kind="primary"] { background:#00d4aa20;border-color:#00d4aa;color:#00d4aa; }
+div.stButton > button[kind="primary"] { background:#00d4aa20; border-color:#00d4aa; color:#00d4aa; }
 div[data-baseweb="input"] input,
 div[data-baseweb="select"] div,
 div[data-baseweb="textarea"] textarea {
-    background:#0f0f1a !important; border-color:#21213a !important;
-    color:#e6edf3 !important;
+    background:#0f0f1a !important; border-color:#21213a !important; color:#e6edf3 !important;
 }
 hr { border-color:#21213a; }
 .chat-msg-user {
@@ -111,7 +105,10 @@ hr { border-color:#21213a; }
     border-radius:12px 12px 12px 2px; padding:12px 16px;
     margin:8px 0; margin-right:20%; color:#c9d1d9; font-size:14px;
 }
-.chat-label { font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8b949e;margin-bottom:4px;letter-spacing:0.1em; }
+.chat-label {
+    font-family:'IBM Plex Mono',monospace; font-size:10px;
+    color:#8b949e; margin-bottom:4px; letter-spacing:0.1em;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -126,7 +123,10 @@ def api_get(path):
 
 def api_post(path, data=None, params=None):
     try:
-        r = requests.post(f"{API}{path}", json=data, params=params, timeout=5)
+        if data is not None:
+            r = requests.post(f"{API}{path}", json=data, params=params, timeout=5)
+        else:
+            r = requests.post(f"{API}{path}", params=params, timeout=5)
         return r.status_code, r.json()
     except Exception as e:
         return 500, {"error": str(e)}
@@ -139,17 +139,34 @@ def api_patch(path, params=None):
         return 500, {"error": str(e)}
 
 def status_badge(status):
-    cls = {"Active":"badge-active","Inactive":"badge-inactive"}.get(status,"badge-pending")
+    cls = {"Active": "badge-active", "Inactive": "badge-inactive"}.get(status, "badge-pending")
     return f'<span class="{cls}">{status}</span>'
 
 
+# ── Live user fetch — source of truth is the API ──────────────
+def get_live_users():
+    """
+    Always fetch from GET /users so hired users persist across
+    page refreshes and appear in all three views immediately.
+    Falls back to seed list if API is unreachable.
+    """
+    data = api_get("/users")
+    if isinstance(data, list) and len(data) > 0:
+        return data
+    # Fallback if API is down
+    return [
+        {"id":1,"username":"dhruv","department":"Engineering","status":"Active",
+         "job_title":"Backend Engineer","email":"dhruv@company.com","manager_id":None},
+        {"id":2,"username":"priya","department":"Sales","status":"Active",
+         "job_title":"Account Executive","email":"priya@company.com","manager_id":1},
+        {"id":3,"username":"amit","department":"HR","status":"Active",
+         "job_title":"HR Generalist","email":"amit@company.com","manager_id":1},
+    ]
+
+
 # ── Session state init ────────────────────────────────────────
-if "offboarded" not in st.session_state:
-    st.session_state.offboarded = set()
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if "hired_users" not in st.session_state:
-    st.session_state.hired_users = []
 
 
 # ── Sidebar ───────────────────────────────────────────────────
@@ -177,6 +194,11 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 
+# ── Fetch users fresh on every render ────────────────────────
+ALL_USERS = get_live_users()
+user_map  = {u["id"]: u for u in ALL_USERS}
+
+
 # ══════════════════════════════════════════════════════════════
 #  VIEW 1 — EMPLOYEE
 # ══════════════════════════════════════════════════════════════
@@ -184,15 +206,13 @@ if "Employee" in view:
     st.markdown('<div class="nx-title">My Access Portal</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">View your current access and request new resources</div>', unsafe_allow_html=True)
 
-    user_id  = st.selectbox("Select your profile", [1, 2, 3],
-                             format_func=lambda x: {1:"dhruv (Engineering)",2:"priya (Sales)",3:"amit (HR)"}.get(x))
-    user_map = {u["id"]: u for u in ALL_USERS}
-    user     = user_map[user_id]
+    # Dropdown built from live API data — includes newly hired users
+    user_options = {u["id"]: f"{u['username']} ({u['department']})" for u in ALL_USERS}
+    user_id = st.selectbox("Select your profile", list(user_options.keys()),
+                            format_func=lambda x: user_options[x])
+    user = user_map[user_id]
 
-    # Check offboard status from session
-    is_offboarded = user_id in st.session_state.offboarded
-
-    if is_offboarded:
+    if user["status"] == "Inactive":
         st.error("⚠️ Your account has been deactivated. Please contact your IT Admin.")
         st.stop()
 
@@ -210,16 +230,24 @@ if "Employee" in view:
             <div style='font-size:12px;color:#8b949e;margin-bottom:12px'>
                 <span style='color:#00d4aa'>email</span> {user['email']}
             </div>
-            {status_badge("Active")}
+            {status_badge(user['status'])}
         </div>
         """, unsafe_allow_html=True)
 
         st.markdown('<div class="nx-header" style="margin-top:16px">Current Access</div>', unsafe_allow_html=True)
-        for res in BIRTHRIGHT.get(user["department"], []):
-            st.markdown(f"""
-            <div class="nx-card-accent">
-                <div style='font-size:13px;color:#e6edf3;font-family:IBM Plex Mono,monospace'>{res}</div>
-                <div style='font-size:11px;color:#8b949e;margin-top:2px'>Active · Birthright</div>
+        entitlements = BIRTHRIGHT.get(user["department"], [])
+        if entitlements:
+            for res in entitlements:
+                st.markdown(f"""
+                <div class="nx-card-accent">
+                    <div style='font-size:13px;color:#e6edf3;font-family:IBM Plex Mono,monospace'>{res}</div>
+                    <div style='font-size:11px;color:#8b949e;margin-top:2px'>Active · Birthright</div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="nx-card">
+                <div style='color:#8b949e;font-size:13px'>No defined policy for this department.</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -228,7 +256,7 @@ if "Employee" in view:
 
         if not st.session_state.chat_history:
             st.session_state.chat_history = [
-                {"role":"bot","text":f"Hi {user['username']}! I can help you request access to resources. What do you need?"}
+                {"role": "bot", "text": f"Hi {user['username']}! I can help you request access to resources. What do you need?"}
             ]
 
         for msg in st.session_state.chat_history:
@@ -243,12 +271,13 @@ if "Employee" in view:
 
         with st.form("chat_form", clear_on_submit=True):
             col_i, col_b = st.columns([4, 1])
-            user_input = col_i.text_input("message", placeholder="e.g. I need access to Salesforce...",
+            user_input = col_i.text_input("message",
+                                           placeholder="e.g. I need access to Salesforce...",
                                            label_visibility="collapsed")
-            submitted  = col_b.form_submit_button("Send")
+            submitted = col_b.form_submit_button("Send")
 
         if submitted and user_input:
-            st.session_state.chat_history.append({"role":"user","text":user_input})
+            st.session_state.chat_history.append({"role": "user", "text": user_input})
             text_lower       = user_input.lower()
             matched_resource = next((v for k, v in RESOURCE_MAP.items() if k in text_lower), None)
 
@@ -273,7 +302,8 @@ if "Employee" in view:
             else:
                 bot_reply = ("I can help with: GitHub, Salesforce, AWS, Slack, or Workday. "
                              "Try: <i>'I need access to GitHub'</i>")
-            st.session_state.chat_history.append({"role":"bot","text":bot_reply})
+
+            st.session_state.chat_history.append({"role": "bot", "text": bot_reply})
             st.rerun()
 
 
@@ -290,32 +320,47 @@ elif "Manager" in view:
     with tab1:
         st.markdown('<div class="nx-header">Transfer requests awaiting approval</div>', unsafe_allow_html=True)
 
-        if st.button("Refresh"):
+        col_ref, col_info = st.columns([1, 5])
+        if col_ref.button("Refresh", key="refresh_approvals"):
             st.rerun()
 
         transfers = api_get("/transfers/pending")
 
         if isinstance(transfers, dict) and "error" in transfers:
-            st.error(f"Could not reach API: {transfers['error']}")
-        elif not isinstance(transfers, list) or len(transfers) == 0:
-            st.markdown("""
-            <div class="nx-card" style="text-align:center;padding:40px">
-                <div style='font-size:32px;margin-bottom:8px'>✓</div>
-                <div style='color:#8b949e;font-size:14px'>No pending approvals</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.error(f"Could not reach API — is uvicorn running? {transfers['error']}")
+        elif not isinstance(transfers, list):
+            st.error("Unexpected response from API.")
         else:
-            pending = [t for t in transfers if isinstance(t, dict) and t.get("status") == "PENDING_APPROVAL"]
+            pending = [t for t in transfers
+                       if isinstance(t, dict) and t.get("status") == "PENDING_APPROVAL"]
+
+            col_info.markdown(
+                f"<span style='font-size:12px;color:#8b949e'>{len(pending)} pending · "
+                f"{len(transfers)} total requests</span>",
+                unsafe_allow_html=True
+            )
+
             if not pending:
-                st.info("No pending approvals.")
+                st.markdown("""
+                <div class="nx-card" style="text-align:center;padding:40px">
+                    <div style='font-size:32px;margin-bottom:8px'>✓</div>
+                    <div style='color:#8b949e;font-size:14px'>No pending approvals</div>
+                    <div style='color:#8b949e;font-size:12px;margin-top:8px'>
+                        Use Manager → Request Transfer to create one
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 for t in pending:
+                    requester = user_map.get(t["user_id"], {})
+                    name      = requester.get("username", f"User {t['user_id']}")
                     st.markdown(f"""
                     <div class="nx-card">
                         <div style='font-size:14px;font-weight:600;color:#e6edf3'>
-                            User ID {t['user_id']} — Transfer Request
+                            {name} — Transfer Request
                         </div>
-                        <div style='font-size:12px;color:#8b949e;margin-top:4px;font-family:IBM Plex Mono,monospace'>
+                        <div style='font-size:12px;color:#8b949e;margin-top:4px;
+                                    font-family:IBM Plex Mono,monospace'>
                             {t['old_department']} → {t['new_department']}
                         </div>
                         <div style='font-size:11px;color:#8b949e;margin-top:6px'>
@@ -323,9 +368,9 @@ elif "Manager" in view:
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-                    col_a, col_r, col_s = st.columns([1, 1, 4])
+                    col_a, col_r, _ = st.columns([1, 1, 4])
                     with col_a:
-                        if st.button("Approve", key=f"approve_{t['token']}"):
+                        if st.button("✅ Approve", key=f"approve_{t['token']}"):
                             code, resp = api_post(
                                 f"/transfer/{t['token']}/approve",
                                 params={"manager_id": 1}
@@ -336,34 +381,44 @@ elif "Manager" in view:
                             else:
                                 st.error(str(resp.get("detail", resp)))
                     with col_r:
-                        if st.button("Reject", key=f"reject_{t['token']}"):
+                        if st.button("❌ Reject", key=f"reject_{t['token']}"):
                             st.warning("Rejection endpoint coming in Sprint 4.")
 
     # ── Tab 2: My team ────────────────────────────────────────
     with tab2:
         st.markdown('<div class="nx-header">Direct reports</div>', unsafe_allow_html=True)
-        team = [u for u in ALL_USERS if u["id"] in (2, 3)]
-        for member in team:
-            is_off    = member["id"] in st.session_state.offboarded
-            cur_status = "Inactive" if is_off else member["status"]
-            entitlements = [] if is_off else BIRTHRIGHT.get(member["department"], [])
-            with st.expander(f"{member['username']}  ·  {member['department']}  ·  {member['job_title']}"):
-                col1, col2 = st.columns(2)
-                col1.markdown(f"**Status:** {cur_status}")
-                col1.markdown(f"**User ID:** {member['id']}")
-                col2.markdown("**Current Access:**")
-                if entitlements:
-                    for e in entitlements:
-                        col2.markdown(f"- `{e}`")
-                else:
-                    col2.markdown("_No active entitlements_")
+
+        # Pull from live API — includes newly hired users under this manager
+        team = [u for u in ALL_USERS if u.get("manager_id") == 1]
+
+        if not team:
+            st.info("No direct reports found.")
+        else:
+            for member in team:
+                entitlements = [] if member["status"] == "Inactive" else BIRTHRIGHT.get(member["department"], [])
+                with st.expander(f"{member['username']}  ·  {member['department']}  ·  {member['job_title']}"):
+                    col1, col2 = st.columns(2)
+                    col1.markdown(f"**Status:** {member['status']}")
+                    col1.markdown(f"**User ID:** {member['id']}")
+                    col1.markdown(f"**Email:** {member['email']}")
+                    col2.markdown("**Current Access:**")
+                    if entitlements:
+                        for e in entitlements:
+                            col2.markdown(f"- `{e}`")
+                    else:
+                        col2.markdown("_No active entitlements_")
 
     # ── Tab 3: Request transfer ───────────────────────────────
     with tab3:
         st.markdown('<div class="nx-header">Request a department transfer</div>', unsafe_allow_html=True)
+
+        # Active users only, pulled from live API
+        active_users  = [u for u in ALL_USERS if u["status"] == "Active"]
+        transfer_opts = {u["id"]: f"{u['username']} ({u['department']})" for u in active_users}
+
         with st.form("transfer_form"):
-            t_user_id  = st.selectbox("Employee", [1, 2, 3],
-                format_func=lambda x: {1:"dhruv (Engineering)",2:"priya (Sales)",3:"amit (HR)"}.get(x))
+            t_user_id  = st.selectbox("Employee", list(transfer_opts.keys()),
+                                       format_func=lambda x: transfer_opts[x])
             t_new_dept = st.selectbox("Transfer to", ["Engineering", "Sales", "HR", "Marketing"])
             t_submit   = st.form_submit_button("Request Transfer")
 
@@ -374,7 +429,9 @@ elif "Manager" in view:
                 st.success("Transfer request created and persisted to SQLite!")
                 st.markdown(f"""
                 <div class="nx-card-accent" style="margin-top:12px">
-                    <div style='font-family:IBM Plex Mono,monospace;font-size:12px;color:#00d4aa'>APPROVAL TOKEN</div>
+                    <div style='font-family:IBM Plex Mono,monospace;font-size:12px;color:#00d4aa'>
+                        APPROVAL TOKEN
+                    </div>
                     <div style='font-family:IBM Plex Mono,monospace;font-size:13px;
                                 color:#e6edf3;margin-top:6px;word-break:break-all'>
                         {resp.get('approval_token')}
@@ -404,30 +461,23 @@ elif "IT Admin" in view:
         verify    = api_get("/audit-log/verify")
         transfers = api_get("/transfers/pending")
 
-        total_logs   = verify.get("total", 0) if isinstance(verify, dict) else 0
-        tampered_ct  = len(verify.get("tampered", [])) if isinstance(verify, dict) else 0
-        pending_ct   = len([t for t in transfers
-                            if isinstance(transfers, list) and isinstance(t, dict)
-                            and t.get("status") == "PENDING_APPROVAL"])
+        total_logs  = verify.get("total", 0) if isinstance(verify, dict) else 0
+        tampered_ct = len(verify.get("tampered", [])) if isinstance(verify, dict) else 0
+        pending_ct  = len([t for t in transfers
+                           if isinstance(transfers, list) and isinstance(t, dict)
+                           and t.get("status") == "PENDING_APPROVAL"])
 
-        # Build live user list — apply session-state offboards
-        live_users = []
-        for u in ALL_USERS + st.session_state.hired_users:
-            u_copy = dict(u)
-            if u_copy["id"] in st.session_state.offboarded:
-                u_copy["status"] = "Inactive"
-            live_users.append(u_copy)
-
-        active_ct   = sum(1 for u in live_users if u["status"] == "Active")
-        inactive_ct = sum(1 for u in live_users if u["status"] == "Inactive")
+        # ALL_USERS is already fetched fresh from API — statuses are live
+        active_ct   = sum(1 for u in ALL_USERS if u["status"] == "Active")
+        inactive_ct = sum(1 for u in ALL_USERS if u["status"] == "Inactive")
 
         c1, c2, c3, c4, c5 = st.columns(5)
         for col, val, lbl, color in [
-            (c1, len(live_users), "Total Users",       "#00d4aa"),
-            (c2, active_ct,       "Active",            "#00d4aa"),
-            (c3, inactive_ct,     "Inactive",          "#f85149" if inactive_ct else "#00d4aa"),
-            (c4, total_logs,      "Audit Entries",     "#00d4aa"),
-            (c5, tampered_ct,     "Tampered Logs",     "#f85149" if tampered_ct else "#00d4aa"),
+            (c1, len(ALL_USERS), "Total Users",    "#00d4aa"),
+            (c2, active_ct,      "Active",         "#00d4aa"),
+            (c3, inactive_ct,    "Inactive",       "#f85149" if inactive_ct else "#00d4aa"),
+            (c4, total_logs,     "Audit Entries",  "#00d4aa"),
+            (c5, tampered_ct,    "Tampered Logs",  "#f85149" if tampered_ct else "#00d4aa"),
         ]:
             col.markdown(f"""
             <div class="nx-metric">
@@ -439,12 +489,12 @@ elif "IT Admin" in view:
         st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
         st.markdown('<div class="nx-header">All users</div>', unsafe_allow_html=True)
 
-        for u in live_users:
+        for u in ALL_USERS:
             is_inactive  = u["status"] == "Inactive"
             ent_list     = [] if is_inactive else BIRTHRIGHT.get(u["department"], [])
             ent_html     = " ".join([
-                f"<code style='background:#0f0f1a;border:1px solid #21213a;padding:2px 8px;"
-                f"border-radius:4px;font-size:11px;color:#8b949e'>{e}</code>"
+                f"<code style='background:#0f0f1a;border:1px solid #21213a;"
+                f"padding:2px 8px;border-radius:4px;font-size:11px;color:#8b949e'>{e}</code>"
                 for e in ent_list
             ])
 
@@ -467,13 +517,12 @@ elif "IT Admin" in view:
                     with st.spinner(f"Revoking all access for {u['username']}..."):
                         code, resp = api_patch(f"/users/{u['id']}/offboard")
                     if code == 200:
-                        st.session_state.offboarded.add(u["id"])
                         st.success(f"Kill switch executed. Revoked: {resp.get('revoked')}")
                         st.rerun()
                     else:
                         st.error(resp.get("detail", "Error"))
             else:
-                col2.markdown("<br>", unsafe_allow_html=True)
+                col2.markdown("<br><br>", unsafe_allow_html=True)
                 col2.markdown('<span class="badge-inactive">Offboarded</span>', unsafe_allow_html=True)
 
     # ── Tab 2: Onboard ────────────────────────────────────────
@@ -483,7 +532,8 @@ elif "IT Admin" in view:
         <div class="nx-card" style="margin-bottom:24px">
             <div style='font-size:13px;color:#8b949e;line-height:1.6'>
                 Hiring automatically provisions the full birthright access bundle
-                based on department ABAC policy. All actions logged to immutable audit trail.
+                based on department ABAC policy. All actions logged to the immutable audit trail.
+                New users appear immediately in all views after hiring.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -497,7 +547,7 @@ elif "IT Admin" in view:
             h_dept    = h_col2.selectbox("Department", ["Engineering","Sales","HR","Marketing","Finance"])
             h_title   = h_col2.text_input("Job Title")
 
-            preview = BIRTHRIGHT.get(h_dept, ["Slack_General (unknown dept — manual review)"])
+            preview = BIRTHRIGHT.get(h_dept, ["Slack_General — unknown dept, manual review required"])
             h_col2.markdown("**Will provision:**")
             for p in preview:
                 h_col2.markdown(f"- `{p}`")
@@ -518,32 +568,26 @@ elif "IT Admin" in view:
                     "status"    : "Pending",
                 })
                 if code == 201:
-                    # Add to session so dashboard reflects the new hire immediately
-                    st.session_state.hired_users.append({
-                        "id"        : int(h_id),
-                        "username"  : h_username,
-                        "department": h_dept,
-                        "status"    : "Active",
-                        "job_title" : h_title,
-                        "email"     : h_email,
-                    })
                     st.success(f"✅ {h_username} hired and activated!")
                     st.markdown(f"""
                     <div class="nx-card-accent">
-                        <div style='color:#00d4aa;font-family:IBM Plex Mono,monospace;font-size:12px;margin-bottom:8px'>
-                            ONBOARDING COMPLETE
-                        </div>
+                        <div style='color:#00d4aa;font-family:IBM Plex Mono,monospace;
+                                    font-size:12px;margin-bottom:8px'>ONBOARDING COMPLETE</div>
                         <div style='font-size:13px;color:#8b949e'>
                             Status: <span style='color:#00d4aa'>{resp.get('status')}</span>
-                            &nbsp;·&nbsp; Audit entries: <span style='color:#00d4aa'>{resp.get('audit_entries_written')}</span>
+                            &nbsp;·&nbsp;
+                            Audit entries: <span style='color:#00d4aa'>{resp.get('audit_entries_written')}</span>
                         </div>
                         <div style='font-size:13px;color:#8b949e;margin-top:4px'>
-                            Provisioned: <span style='color:#e6edf3'>{", ".join(resp.get("entitlements_provisioned", []))}</span>
+                            Provisioned: <span style='color:#e6edf3'>
+                                {", ".join(resp.get("entitlements_provisioned", []))}
+                            </span>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
                     if "warning" in resp:
                         st.warning(resp["warning"])
+                    st.rerun()
                 else:
                     st.error(str(resp.get("detail", resp)))
 
@@ -561,9 +605,11 @@ elif "IT Admin" in view:
         elif not logs:
             st.info("No audit entries yet.")
         else:
-            actions = ["ALL"] + sorted(list({l.get("action","") for l in logs if isinstance(l, dict)}))
+            actions = ["ALL"] + sorted({l.get("action", "") for l in logs if isinstance(l, dict)})
             action_filter = st.selectbox("Filter by action", actions)
-            filtered = logs if action_filter == "ALL" else [l for l in logs if l.get("action") == action_filter]
+            filtered = logs if action_filter == "ALL" else [
+                l for l in logs if l.get("action") == action_filter
+            ]
 
             ACTION_COLORS = {
                 "AUTO_PROVISION"    : "#00d4aa",
@@ -575,14 +621,17 @@ elif "IT Admin" in view:
                 "FLAGGED"           : "#e3b341",
                 "PENDING_APPROVAL"  : "#e3b341",
             }
+
             rows_html = ""
             for log in reversed(filtered):
-                action    = log.get("action","")
+                action    = log.get("action", "")
                 color     = ACTION_COLORS.get(action.split(" →")[0].strip(), "#8b949e")
-                ts        = log.get("timestamp","")[:19].replace("T"," ")
+                ts        = log.get("timestamp", "")[:19].replace("T", " ")
                 actor     = "SYSTEM" if log.get("actor_id") == 0 else f"user:{log.get('actor_id')}"
-                outcome   = log.get("outcome","")
-                out_color = "#00d4aa" if outcome == "Success" else "#f85149" if outcome in ("Failed","Blocked") else "#e3b341"
+                outcome   = log.get("outcome", "")
+                out_color = ("#00d4aa" if outcome == "Success"
+                             else "#f85149" if outcome in ("Failed", "Blocked")
+                             else "#e3b341")
                 rows_html += (
                     f"<tr>"
                     f"<td><code style='font-size:11px;color:#8b949e'>{log.get('id')}</code></td>"
@@ -591,9 +640,11 @@ elif "IT Admin" in view:
                     f"<td style='font-size:12px;color:#8b949e'>{actor}</td>"
                     f"<td style='font-size:12px'>user:{log.get('target_user_id')}</td>"
                     f"<td style='font-size:12px;color:{out_color}'>{outcome}</td>"
-                    f"<td style='font-family:IBM Plex Mono,monospace;font-size:10px;color:#8b949e'>{log.get('integrity_hash','')}</td>"
+                    f"<td style='font-family:IBM Plex Mono,monospace;font-size:10px;color:#8b949e'>"
+                    f"{log.get('integrity_hash', '')}</td>"
                     f"</tr>"
                 )
+
             st.markdown(f"""
             <div style='overflow-x:auto'>
             <table class="nx-table">
@@ -612,9 +663,9 @@ elif "IT Admin" in view:
         st.markdown("""
         <div class="nx-card" style="margin-bottom:24px">
             <div style='font-size:13px;color:#8b949e;line-height:1.6'>
-                Every audit entry is hashed at write time using SHA-256 across all immutable fields.
-                This check re-computes every hash and flags rows where the stored value no longer
-                matches — detecting any post-write tampering.
+                Every audit entry is hashed at write time using SHA-256 across all immutable
+                fields. This check re-computes every hash and flags rows where the stored value
+                no longer matches — detecting any post-write tampering.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -627,8 +678,9 @@ elif "IT Admin" in view:
                 total    = result.get("total", 0)
                 ok       = result.get("ok", 0)
                 tampered = result.get("tampered", [])
+
                 c1, c2, c3 = st.columns(3)
-                for col, val, lbl in [(c1,total,"Total Rows"),(c2,ok,"Clean"),(c3,len(tampered),"Tampered")]:
+                for col, val, lbl in [(c1, total, "Total Rows"), (c2, ok, "Clean"), (c3, len(tampered), "Tampered")]:
                     color = "#f85149" if lbl == "Tampered" and val > 0 else "#00d4aa"
                     col.markdown(f"""
                     <div class="nx-metric">
@@ -636,6 +688,7 @@ elif "IT Admin" in view:
                         <div class="lbl">{lbl}</div>
                     </div>
                     """, unsafe_allow_html=True)
+
                 st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
                 if not tampered:
                     st.markdown("""
