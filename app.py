@@ -787,6 +787,60 @@ elif "IT Admin" in view:
             </div>
             """, unsafe_allow_html=True)
 
+            # ── Download button ───────────────────────────────
+            import csv, io
+            def build_csv(log_entries):
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerow(["id","timestamp","action","actor","target_user_id",
+                                 "outcome","integrity_hash","details"])
+                for log in log_entries:
+                    actor = "SYSTEM" if log.get("actor_id") == 0 else f"user:{log.get('actor_id')}"
+                    writer.writerow([
+                        log.get("id",""),
+                        log.get("timestamp","")[:19].replace("T"," "),
+                        log.get("action",""),
+                        actor,
+                        log.get("target_user_id",""),
+                        log.get("outcome",""),
+                        log.get("integrity_hash",""),
+                        str(log.get("details",{})),
+                    ])
+                return buf.getvalue()
+
+            from datetime import datetime as _dt
+            filename    = f"nexusid_audit_{_dt.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            export_logs = filtered  # export whatever is currently filtered
+
+            st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+            col_dl, col_info = st.columns([1, 4])
+            import json as _json
+            json_filename = f"nexusid_audit_{_dt.now().strftime('%Y%m%d_%H%M%S')}.json"
+            json_data     = _json.dumps(export_logs, indent=2, default=str)
+
+            col_dl, col_dl2, col_info = st.columns([1, 1, 4])
+            col_dl.download_button(
+                label     = "Download CSV",
+                data      = build_csv(export_logs),
+                file_name = filename,
+                mime      = "text/csv",
+                key       = "download_audit_csv",
+            )
+            col_dl2.download_button(
+                label     = "Download JSON",
+                data      = json_data,
+                file_name = json_filename,
+                mime      = "application/json",
+                key       = "download_audit_json",
+            )
+            col_info.markdown(
+                f"<span style='font-size:12px;color:#8b949e;line-height:2.5'>"
+                f"Exporting {len(export_logs)} entries"
+                f"{f' (filtered: {action_filter})' if action_filter != 'ALL' else ''}"
+                f"</span>",
+                unsafe_allow_html=True,
+            )
+
     # ── Tab 4: Integrity ──────────────────────────────────────
     with tab4:
         st.markdown('<div class="nx-header">SHA-256 log integrity verification</div>', unsafe_allow_html=True)
