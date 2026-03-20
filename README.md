@@ -418,11 +418,3 @@ This project was built for a hackathon. If you'd like to extend it:
 4. All endpoints use `Depends(get_db)` — swap SQLite for PostgreSQL by changing `DATABASE_URL`
 
 ---
-
-## License
-
-MIT License — see `LICENSE` for details.
-
----
-
-_Built for the Self-Service Identity Lifecycle Automation track._
