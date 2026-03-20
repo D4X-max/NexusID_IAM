@@ -407,14 +407,3 @@ pip install -r requirements.txt
 ```
 
 ---
-
-## Contributing
-
-This project was built for a hackathon. If you'd like to extend it:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/real-slack-connector`)
-3. The mock connector interface is in `simulated_connectors/mock_engine.py` — swap `mock_api_call` with real SDK calls
-4. All endpoints use `Depends(get_db)` — swap SQLite for PostgreSQL by changing `DATABASE_URL`
-
----
