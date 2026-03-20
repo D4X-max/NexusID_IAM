@@ -779,6 +779,105 @@ def notify_manager(
         "note"             : "In production this fires a real Slack/email webhook.",
     }
 
+
+# ── User access timeline ──────────────────────────────────────
+@app.get("/users/{user_id}/timeline", tags=["Users"])
+def get_user_timeline(user_id: int, db: Session = Depends(get_db)) -> dict:
+    """
+    Returns a full chronological access history for a user.
+    Shows every JML event, access grant/revoke, and audit entry
+    in one place — the before/after access state in narrative form.
+    """
+    user = get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found.")
+
+    logs = (
+        db.query(AuditLogDB)
+        .filter(AuditLogDB.target_user_id == user_id)
+        .order_by(AuditLogDB.timestamp.asc())
+        .all()
+    )
+
+    ACTION_DESCRIPTIONS = {
+        "AUTO_PROVISION"         : "Access granted",
+        "AUTO_REVOKE"            : "Access revoked",
+        "EMERGENCY_REVOKE"       : "Emergency revoke",
+        "TRANSFER_REQUESTED"     : "Transfer requested",
+        "TRANSFER_APPROVED"      : "Transfer approved",
+        "TRANSFER_REJECTED"      : "Transfer rejected",
+        "TERMINATION_REQUESTED"  : "Termination initiated",
+        "TERMINATION_COMPLETED"  : "Offboarding complete",
+        "JIT_GRANTED"            : "JIT access granted",
+        "JIT_EXPIRED"            : "JIT access expired (auto)",
+        "JIT_REVOKED_EARLY"      : "JIT access revoked early",
+        "PENDING_APPROVAL"       : "Pending admin review",
+        "MOVER_REVIEW_REQUIRED"  : "Manual review required",
+        "ACCESS_REVIEW_CERTIFIED": "Access certified by manager",
+        "ACCESS_REVIEW_FLAGGED"  : "Access flagged for reduction",
+        "MANAGER_NOTIFIED"       : "Manager notified",
+        "BLOCKED"                : "Request blocked (high risk)",
+        "FLAGGED"                : "Request flagged (medium risk)",
+    }
+
+    EVENT_CATEGORY = {
+        "AUTO_PROVISION"         : "joiner",
+        "AUTO_REVOKE"            : "mover",
+        "EMERGENCY_REVOKE"       : "leaver",
+        "TRANSFER_REQUESTED"     : "mover",
+        "TRANSFER_APPROVED"      : "mover",
+        "TRANSFER_REJECTED"      : "mover",
+        "TERMINATION_REQUESTED"  : "leaver",
+        "TERMINATION_COMPLETED"  : "leaver",
+        "JIT_GRANTED"            : "jit",
+        "JIT_EXPIRED"            : "jit",
+        "JIT_REVOKED_EARLY"      : "jit",
+        "PENDING_APPROVAL"       : "joiner",
+        "MOVER_REVIEW_REQUIRED"  : "mover",
+        "ACCESS_REVIEW_CERTIFIED": "review",
+        "ACCESS_REVIEW_FLAGGED"  : "review",
+        "MANAGER_NOTIFIED"       : "admin",
+        "BLOCKED"                : "security",
+        "FLAGGED"                : "security",
+    }
+
+    events = []
+    for log in logs:
+        action_key = log.action.split(" →")[0].strip()
+        details    = log.details if isinstance(log.details, dict) else {}
+        resource   = details.get("resource_name") or details.get("resource") or ""
+        actor      = "System" if log.actor_id == 0 else f"User {log.actor_id}"
+        ts         = log.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+
+        events.append({
+            "id"         : log.id,
+            "timestamp"  : ts.isoformat(),
+            "action"     : log.action,
+            "description": ACTION_DESCRIPTIONS.get(action_key, log.action),
+            "category"   : EVENT_CATEGORY.get(action_key, "admin"),
+            "resource"   : resource,
+            "actor"      : actor,
+            "outcome"    : log.outcome,
+            "details"    : details,
+        })
+
+    # Current access state
+    current_access = [] if user.status == "Inactive" else                      BIRTHRIGHT_POLICIES.get(user.department, [])
+
+    return {
+        "user_id"       : user_id,
+        "username"      : user.username,
+        "email"         : user.email,
+        "department"    : user.department,
+        "job_title"     : user.job_title,
+        "status"        : user.status,
+        "current_access": current_access,
+        "total_events"  : len(events),
+        "events"        : events,
+    }
+
 # ── Orphaned account scanner ──────────────────────────────────
 @app.get("/users/orphaned-check", tags=["Users"])
 def orphaned_check(

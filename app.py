@@ -176,9 +176,138 @@ def get_live_users():
 # ── Session state init ────────────────────────────────────────
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "selected_role" not in st.session_state:
+    st.session_state.selected_role = None
 
 
-# ── Sidebar ───────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  LANDING PAGE — shown until a role is selected
+# ══════════════════════════════════════════════════════════════
+if st.session_state.selected_role is None:
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"] { display: none !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style='text-align:center;padding:60px 0 40px'>
+        <div style='font-family:IBM Plex Mono,monospace;font-size:42px;
+                    font-weight:600;letter-spacing:0.04em;margin-bottom:8px'>
+            <span style='color:#00d4aa'>NEXUS</span><span style='color:#e6edf3'>ID</span>
+        </div>
+        <div style='font-size:15px;color:#8b949e;letter-spacing:0.12em;
+                    font-family:IBM Plex Mono,monospace;text-transform:uppercase;
+                    margin-bottom:8px'>
+            Identity Access Management
+        </div>
+        <div style='font-size:13px;color:#8b949e;max-width:520px;
+                    margin:0 auto;line-height:1.7'>
+            Automates the full Joiner–Mover–Leaver lifecycle with simulated IAM integrations,
+            approval workflows, JIT access, and SHA-256 audit integrity.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Role cards ────────────────────────────────────────────
+    col1, col2, col3 = st.columns(3)
+
+    ROLES = [
+        {
+            "col"   : col1,
+            "key"   : "👤  Employee",
+            "icon"  : "👤",
+            "title" : "Employee",
+            "desc"  : "View your access, request resources, and request JIT elevated access for sensitive tasks.",
+            "tags"  : ["Access requests", "JIT access", "Chatbot"],
+            "color" : "#00d4aa",
+            "bg"    : "#0d3a2e",
+            "border": "#00d4aa44",
+        },
+        {
+            "col"   : col2,
+            "key"   : "✅  Manager",
+            "icon"  : "✅",
+            "title" : "Manager",
+            "desc"  : "Approve transfer requests, review team access, and initiate offboarding for your direct reports.",
+            "tags"  : ["Approvals", "Access review", "Leaver requests"],
+            "color" : "#79c0ff",
+            "bg"    : "#0d1e3a",
+            "border": "#79c0ff44",
+        },
+        {
+            "col"   : col3,
+            "key"   : "🛡️  IT Admin",
+            "icon"  : "🛡️",
+            "title" : "IT Admin",
+            "desc"  : "Full lifecycle management — onboard, audit, integrity checks, JIT monitor, and orphan scanning.",
+            "tags"  : ["Onboarding", "Audit trail", "Orphan scanner"],
+            "color" : "#e3b341",
+            "bg"    : "#3a2d0d",
+            "border": "#e3b34144",
+        },
+    ]
+
+    for role in ROLES:
+        tags_html = "".join([
+            f"<span style='background:{role['bg']};color:{role['color']};border:1px solid {role['border']};"
+            f"padding:2px 10px;border-radius:12px;font-size:11px;font-family:IBM Plex Mono,monospace;"
+            f"margin-right:6px'>{t}</span>"
+            for t in role["tags"]
+        ])
+        role["col"].markdown(f"""
+        <div style='background:#161622;border:1px solid {role["border"]};border-radius:12px;
+                    padding:28px 24px;text-align:center;min-height:240px;
+                    transition:border-color 0.2s'>
+            <div style='font-size:32px;margin-bottom:12px'>{role["icon"]}</div>
+            <div style='font-size:18px;font-weight:600;color:#e6edf3;margin-bottom:10px'>
+                {role["title"]}
+            </div>
+            <div style='font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:16px'>
+                {role["desc"]}
+            </div>
+            <div style='margin-bottom:4px'>{tags_html}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
+        if role["col"].button(
+            f"Enter as {role['title']}",
+            key=f"role_{role['key']}",
+            use_container_width=True,
+        ):
+            st.session_state.selected_role = role["key"]
+            st.rerun()
+
+    # ── Stats bar ─────────────────────────────────────────────
+    st.markdown("<div style='margin-top:48px'></div>", unsafe_allow_html=True)
+    stats_data = api_get("/audit-log/verify")
+    users_data = api_get("/users")
+    total_users = len(users_data) if isinstance(users_data, list) else 0
+    total_logs  = stats_data.get("total", 0) if isinstance(stats_data, dict) else 0
+    jit_data    = api_get("/jit/grants")
+    total_jit   = len(jit_data) if isinstance(jit_data, list) else 0
+
+    s1, s2, s3, s4 = st.columns(4)
+    for col, val, lbl in [
+        (s1, total_users, "Users managed"),
+        (s2, total_logs,  "Audit entries"),
+        (s3, total_jit,   "JIT grants issued"),
+        (s4, "SHA-256",   "Audit integrity"),
+    ]:
+        col.markdown(f"""
+        <div style='text-align:center;padding:16px;background:#161622;
+                    border:1px solid #21213a;border-radius:8px'>
+            <div style='font-family:IBM Plex Mono,monospace;font-size:24px;
+                        font-weight:600;color:#00d4aa'>{val}</div>
+            <div style='font-size:11px;color:#8b949e;text-transform:uppercase;
+                        letter-spacing:0.1em;margin-top:4px'>{lbl}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.stop()  # Don't render the rest of the page
+
+# ── Role is selected — show sidebar and portal ────────────────
 with st.sidebar:
     st.markdown("""
     <div style='padding:20px 0 24px'>
@@ -194,13 +323,21 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     view = st.radio("view", ["👤  Employee", "✅  Manager", "🛡️  IT Admin"],
+                    index=["👤  Employee", "✅  Manager", "🛡️  IT Admin"].index(
+                        st.session_state.selected_role
+                    ),
                     label_visibility="collapsed")
+    st.session_state.selected_role = view
     st.markdown("---")
     st.markdown("""
     <div style='font-size:11px;color:#8b949e;font-family:IBM Plex Mono,monospace;line-height:1.8'>
-        v0.6.0 — Sprint 3<br>SQLite · IsolationForest<br>SHA-256 Audit Integrity
+        v0.8.0 — NexusID<br>SQLite · IsolationForest<br>SHA-256 Audit Integrity
     </div>
     """, unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+    if st.button("Back to home", use_container_width=True):
+        st.session_state.selected_role = None
+        st.rerun()
 
 
 # ── Fetch users fresh on every render ────────────────────────
@@ -804,7 +941,7 @@ elif "IT Admin" in view:
     st.markdown('<div class="nx-title">IT Admin Console</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">User lifecycle · Audit logs · System integrity</div>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊  Dashboard", "➕  Onboard", "📋  Audit Log", "🔍  Integrity", "⚡  JIT Monitor", "🔎  Orphan Scanner"])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊  Dashboard", "➕  Onboard", "📋  Audit Log", "🔍  Integrity", "⚡  JIT Monitor", "🔎  Orphan Scanner", "📈  Timeline"])
 
     # ── Tab 1: Dashboard ──────────────────────────────────────
     with tab1:
@@ -1437,3 +1574,162 @@ elif "IT Admin" in view:
                                 f'last active {u["days_inactive"]}d ago</div>',
                                 unsafe_allow_html=True
                             )
+
+    # ── Tab 7: User Access Timeline ──────────────────────────
+    with tab7:
+        st.markdown('<div class="nx-header">User access timeline — full lifecycle history</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                Every action taken on a user — from hire to offboard — in chronological order.
+                Shows the complete before/after access state for any user.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        tl_options = {u["id"]: f"{u['username']} ({u['department']} · {u['status']})"
+                      for u in ALL_USERS}
+        tl_col1, tl_col2 = st.columns([3, 1])
+        tl_user_id = tl_col1.selectbox("Select user", list(tl_options.keys()),
+                                        format_func=lambda x: tl_options[x],
+                                        key="timeline_user")
+        load_tl = tl_col2.button("Load Timeline", type="primary", key="load_timeline")
+
+        if load_tl or "timeline_data" in st.session_state:
+            if load_tl:
+                with st.spinner("Loading timeline..."):
+                    st.session_state.timeline_data = api_get(f"/users/{tl_user_id}/timeline")
+                    st.session_state.timeline_uid  = tl_user_id
+
+            tl = st.session_state.get("timeline_data", {})
+
+            if isinstance(tl, dict) and "error" in tl:
+                st.error(f"API error: {tl['error']}")
+            elif isinstance(tl, dict) and "username" in tl:
+
+                # ── User header ───────────────────────────────
+                status_col = "#00d4aa" if tl["status"] == "Active" else "#f85149"
+                st.markdown(f"""
+                <div class="nx-card" style="margin-bottom:20px;border-left:3px solid {status_col}">
+                    <div style='display:flex;justify-content:space-between;align-items:center'>
+                        <div>
+                            <div style='font-size:20px;font-weight:600;color:#e6edf3'>
+                                {tl["username"]}
+                            </div>
+                            <div style='font-size:12px;color:#8b949e;margin-top:4px;
+                                        font-family:IBM Plex Mono,monospace'>
+                                {tl["department"]} · {tl["job_title"]} · {tl["email"]}
+                            </div>
+                        </div>
+                        <div style='text-align:right'>
+                            <span style='background:{"#0d3a2e" if tl["status"]=="Active" else "#3a0d0d"};
+                                         color:{status_col};border:1px solid {status_col}33;
+                                         padding:4px 14px;border-radius:12px;
+                                         font-family:IBM Plex Mono,monospace;font-size:13px'>
+                                {tl["status"]}
+                            </span>
+                        </div>
+                    </div>
+                    <div style='margin-top:12px'>
+                        <div style='font-size:12px;color:#8b949e;margin-bottom:6px'>Current access:</div>
+                        <div>{"".join([
+                            f"<code style='background:#0f0f1a;border:1px solid #21213a;padding:2px 10px;"
+                            f"border-radius:4px;font-size:12px;color:#00d4aa;margin-right:6px'>{r}</code>"
+                            for r in tl["current_access"]
+                        ]) if tl["current_access"] else
+                        "<span style='font-size:12px;color:#8b949e'>No active entitlements</span>"
+                        }</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── Timeline events ───────────────────────────
+                st.markdown(
+                    f'<div class="nx-header">{tl["total_events"]} events</div>',
+                    unsafe_allow_html=True
+                )
+
+                CATEGORY_COLORS = {
+                    "joiner"  : ("#00d4aa", "#0d3a2e"),
+                    "mover"   : ("#79c0ff", "#0d1e3a"),
+                    "leaver"  : ("#f85149", "#3a0d0d"),
+                    "jit"     : ("#e3b341", "#3a2d0d"),
+                    "review"  : ("#b39ddb", "#1a1a2e"),
+                    "security": ("#f85149", "#3a0d0d"),
+                    "admin"   : ("#8b949e", "#161622"),
+                }
+
+                events = tl.get("events", [])
+                if not events:
+                    st.markdown("""
+                    <div class="nx-card" style="text-align:center;padding:30px">
+                        <div style='color:#8b949e;font-size:13px'>No events recorded yet.</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    for i, ev in enumerate(events):
+                        cat    = ev.get("category", "admin")
+                        color, bg = CATEGORY_COLORS.get(cat, ("#8b949e", "#161622"))
+                        ts     = ev.get("timestamp","")[:19].replace("T"," ")
+                        res    = ev.get("resource","")
+                        actor  = ev.get("actor","System")
+                        outcome = ev.get("outcome","")
+                        out_color = "#00d4aa" if outcome in ("Success","Certified")                                     else "#f85149" if outcome in ("Failed","Blocked","Rejected")                                     else "#e3b341"
+
+                        # Connector line except last
+                        if i < len(events) - 1:
+                            st.markdown(f"""
+                            <div style='display:flex;align-items:flex-start;gap:16px;margin-bottom:0'>
+                                <div style='display:flex;flex-direction:column;align-items:center;flex-shrink:0'>
+                                    <div style='width:12px;height:12px;border-radius:50%;
+                                                background:{color};margin-top:14px;flex-shrink:0'></div>
+                                    <div style='width:1px;height:100%;min-height:40px;
+                                                background:{color}44;margin-top:4px'></div>
+                                </div>
+                                <div class="nx-card" style="flex:1;margin-bottom:4px;
+                                                            border-left:3px solid {color};
+                                                            background:{bg}">
+                                    <div style='display:flex;justify-content:space-between;
+                                                align-items:center;margin-bottom:4px'>
+                                        <div style='font-size:13px;font-weight:600;color:#e6edf3'>
+                                            {ev["description"]}
+                                            {f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
+                                        </div>
+                                        <span style='font-size:11px;color:{out_color};
+                                                     font-family:IBM Plex Mono,monospace'>
+                                            {outcome}
+                                        </span>
+                                    </div>
+                                    <div style='font-size:11px;color:#8b949e;
+                                                font-family:IBM Plex Mono,monospace'>
+                                        {ts} &nbsp;·&nbsp; {actor}
+                                    </div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div style='display:flex;align-items:flex-start;gap:16px'>
+                                <div style='width:12px;height:12px;border-radius:50%;
+                                            background:{color};margin-top:14px;flex-shrink:0'></div>
+                                <div class="nx-card" style="flex:1;margin-bottom:4px;
+                                                            border-left:3px solid {color};
+                                                            background:{bg}">
+                                    <div style='display:flex;justify-content:space-between;
+                                                align-items:center;margin-bottom:4px'>
+                                        <div style='font-size:13px;font-weight:600;color:#e6edf3'>
+                                            {ev["description"]}
+                                            {f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
+                                        </div>
+                                        <span style='font-size:11px;color:{out_color};
+                                                     font-family:IBM Plex Mono,monospace'>
+                                            {outcome}
+                                        </span>
+                                    </div>
+                                    <div style='font-size:11px;color:#8b949e;
+                                                font-family:IBM Plex Mono,monospace'>
+                                        {ts} &nbsp;·&nbsp; {actor}
+                                    </div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
