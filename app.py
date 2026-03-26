@@ -380,10 +380,14 @@ else:
 if "Employee" in view:
     st.markdown('<div class="nx-title">My Access Portal</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">View your current access and request new resources</div>', unsafe_allow_html=True)
+    
+    def clear_chat_history():
+        st.session_state.chat_history = []
 
     user_options = {u["id"]: f"{u['username']} ({u['department']})" for u in ALL_USERS}
     user_id = st.selectbox("Select your profile", list(user_options.keys()),
-                            format_func=lambda x: user_options[x])
+                            format_func=lambda x: user_options[x],
+                            on_change=clear_chat_history)
     user = user_map[user_id]
 
     if user["status"] == "Inactive":
@@ -1463,16 +1467,23 @@ elif "IT Admin" in view:
         </div>
         """, unsafe_allow_html=True)
 
-        col_days, col_scan, _ = st.columns([1, 1, 4])
+        col_days, col_scan, col_clear, _ = st.columns([1, 1, 1, 3])
         inactive_days = col_days.number_input(
             "Flag if inactive for (days)", min_value=1, max_value=365, value=30
         )
-        run_scan = col_scan.button("Run Scan", type="primary")
 
-        if run_scan:
+        if col_scan.button("Run Scan", type="primary"):
             with st.spinner("Scanning all active accounts..."):
-                result = api_get(f"/users/orphaned-check?inactive_days={inactive_days}")
+                st.session_state.orphan_result       = api_get(f"/users/orphaned-check?inactive_days={inactive_days}")
+                st.session_state.orphan_inactive_days = inactive_days
 
+        if col_clear.button("Clear", key="clear_orphan"):
+            st.session_state.pop("orphan_result", None)
+            st.rerun()
+
+        result = st.session_state.get("orphan_result")
+
+        if result is not None:
             if isinstance(result, dict) and "error" in result:
                 st.error(f"API error: {result['error']}")
             else:
@@ -1481,8 +1492,9 @@ elif "IT Admin" in view:
 
                 # Metrics
                 c1, c2, c3 = st.columns(3)
+                orph_color = "#f85149" if orphaned else "#00d4aa"
                 c1.markdown(f"""<div class="nx-metric">
-                    <div class="val" style="color:'#f85149' if len(orphaned) else '#00d4aa'">{len(orphaned)}</div>
+                    <div class="val" style="color:{orph_color}">{len(orphaned)}</div>
                     <div class="lbl">Orphaned accounts</div></div>""", unsafe_allow_html=True)
                 c2.markdown(f"""<div class="nx-metric">
                     <div class="val">{len(clean)}</div>
@@ -1542,18 +1554,20 @@ elif "IT Admin" in view:
                         </div>
                         """, unsafe_allow_html=True)
 
-                        col2a, col2b = col2.columns(2) if hasattr(col2, "columns") else (col2, col2)
                         if col2.button("Offboard", key=f"orphan_offboard_{u['id']}"):
                             with st.spinner(f"Revoking access for {u['username']}..."):
                                 code, resp = api_patch(f"/users/{u['id']}/offboard")
                             if code == 200:
-                                st.success(
-                                    f"{u['username']} offboarded. "
-                                    f"Revoked: {resp.get('revoked')}"
+                                st.success(f"{u['username']} offboarded. Revoked: {resp.get('revoked')}")
+                                # Re-fetch so offboarded user disappears from the list
+                                threshold = st.session_state.get("orphan_inactive_days", 30)
+                                st.session_state.orphan_result = api_get(
+                                    f"/users/orphaned-check?inactive_days={threshold}"
                                 )
                                 st.rerun()
                             else:
                                 st.error(resp.get("detail", "Error"))
+
                         if u.get("manager_id") and st.button("Notify Mgr", key=f"notify_{u['id']}"):
                             code, resp = api_post(
                                 f"/users/{u['id']}/notify-manager",
