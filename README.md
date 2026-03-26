@@ -373,13 +373,10 @@ Per the hackathon brief:
 
 ---
 
-## 📊 Updated Database Schema
-
-The SQLite schema has been upgraded to support advanced tracking and cryptographic integrity.
-
+## Database Schema
 ---
 
-### 👤 `users`
+### `users`
 
 | Column        | Type         | Description                                                                 |
 |--------------|-------------|-----------------------------------------------------------------------------|
@@ -392,7 +389,7 @@ The SQLite schema has been upgraded to support advanced tracking and cryptograph
 
 ---
 
-### 📜 `audit_logs` *(Append-only)*
+### `audit_logs` *(Append-only)*
 
 | Column         | Type         | Description                                                                 |
 |---------------|-------------|-----------------------------------------------------------------------------|
@@ -404,7 +401,7 @@ The SQLite schema has been upgraded to support advanced tracking and cryptograph
 
 ---
 
-### 🔄 `pending_transfers`
+### `pending_transfers`
 
 | Column           | Type         | Description                                                                 |
 |------------------|-------------|-----------------------------------------------------------------------------|
