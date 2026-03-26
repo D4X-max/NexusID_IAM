@@ -976,11 +976,12 @@ def orphaned_check(
                     "last_activity" : ts.isoformat(),
                     "days_inactive" : days_inactive,
                 })
+    actual_active_count = len(orphaned) + len(clean)
 
     return {
         "scanned_at"    : datetime.now(timezone.utc).isoformat(),
         "inactive_days" : inactive_days,
-        "total_active"  : len(all_users),
+        "total_active"  : actual_active_count, # Changed from len(all_users)
         "orphaned_count": len(orphaned),
         "clean_count"   : len(clean),
         "orphaned"      : orphaned,
