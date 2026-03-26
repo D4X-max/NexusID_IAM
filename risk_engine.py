@@ -14,7 +14,8 @@ DEPARTMENT_IDS = {
     "Engineering" : 1,
     "Sales"       : 2,
     "HR"          : 3,
-    "Marketing"   : 4,
+    "Marketing"   : 4,  
+    "Finance"     : 5,  # NEW
     "Unknown"     : 99,
 }
 
@@ -26,15 +27,28 @@ RESOURCE_IDS = {
     "Slack_Sales_Channel"      : 21,
     "Workday_Basic"            : 30,
     "Slack_General"            : 31,
+    
+    # NEW MARKETING RESOURCES
+    "Salesforce_Marketing"     : 40,
+    "Slack_Marketing_Channel"  : 41,
+    "AWS_Analytics"            : 42,
+    
+    # NEW FINANCE RESOURCES
+    "Workday_Finance"          : 50,
+    "Slack_Finance_Channel"    : 51,
+    "AWS_Billing"              : 52,
+    
     "AWS_Root"                 : 99,
     "MANUAL_REVIEW_REQUIRED"   : 98,
 }
 
 # Which resource IDs each department legitimately owns
 DEPARTMENT_RESOURCES = {
-    1: {10, 11, 12},   # Engineering
+    1: {10, 11, 12},    # Engineering
     2: {20, 21},        # Sales
     3: {30, 31},        # HR
+    4: {40, 41, 42},    # Marketing
+    5: {50, 51, 52},    # Finance
 }
 
 # ── Training data ─────────────────────────────────────────────
@@ -49,6 +63,17 @@ TRAINING_DATA = [
     # HR normal
     [3, 30, 1], [3, 30, 1], [3, 30, 1], [3, 30, 2],
     [3, 31, 1], [3, 31, 1], [3, 31, 1], [3, 31, 2],
+    
+    # NEW: Marketing normal
+    [4, 40, 1], [4, 40, 1], [4, 40, 1], [4, 40, 2],
+    [4, 41, 1], [4, 41, 1], [4, 41, 1], [4, 41, 2],
+    [4, 42, 1], [4, 42, 1], [4, 42, 1], [4, 42, 2],
+    
+    # NEW: Finance normal
+    [5, 50, 1], [5, 50, 1], [5, 50, 1], [5, 50, 2],
+    [5, 51, 1], [5, 51, 1], [5, 51, 1], [5, 51, 2],
+    [5, 52, 1], [5, 52, 1], [5, 52, 1], [5, 52, 2],
+
     # Cross-dept anomalies at all access levels
     [1, 20, 1], [1, 20, 2], [1, 20, 3],
     [1, 21, 1], [1, 21, 2], [1, 21, 3],
@@ -56,10 +81,17 @@ TRAINING_DATA = [
     [2, 12, 1], [2, 12, 2], [2, 12, 3],
     [3, 10, 1], [3, 10, 2], [3, 10, 3],
     [3, 12, 1], [3, 12, 2], [3, 12, 3],
+    
+    # NEW: Marketing/Finance Anomalies
+    [4, 50, 1], [4, 52, 1], [4, 10, 1], # Marketing reaching into Finance/Eng
+    [5, 40, 1], [5, 10, 1], [5, 12, 1], # Finance reaching into Marketing/Eng
+    
     # AWS_Root — always anomalous regardless of dept
     [1, 99, 1], [1, 99, 2], [1, 99, 3],
     [2, 99, 1], [2, 99, 2], [2, 99, 3],
     [3, 99, 1], [3, 99, 2], [3, 99, 3],
+    [4, 99, 1], [4, 99, 2], [4, 99, 3],
+    [5, 99, 1], [5, 99, 2], [5, 99, 3],
 ]
 
 # ── Train ─────────────────────────────────────────────────────
@@ -113,7 +145,7 @@ def calculate_risk_score(dept_id: int, resource_id: int,
     return {
         "score"          : round(score, 3),
         "level"          : level,
-        "recommendation" : "APPROVE" if level == "LOW" else "REVIEW" if level == "MEDIUM" else "BLOCK",
+        "recommendation" : "Auto-approve based on low risk profile." if level == "LOW" else "REVIEW" if level == "MEDIUM" else "BLOCK",
         "raw_score"      : round(raw, 4),
         "cross_dept"     : _is_cross_dept(dept_id, resource_id),
     }
@@ -121,10 +153,32 @@ def calculate_risk_score(dept_id: int, resource_id: int,
 
 def assess_request(department: str, resource_name: str,
                    access_level: int = 1) -> dict:
-    """String-based wrapper — takes names from main.py directly."""
+    """String-based wrapper — handles specific UI explanations."""
     dept_id     = DEPARTMENT_IDS.get(department, 99)
     resource_id = RESOURCE_IDS.get(resource_name, 98)
     result      = calculate_risk_score(dept_id, resource_id, access_level)
+    
+    # --- ADD EXPLICIT RULE REASONS FOR UI FEEDBACK ---
+    res_lower = resource_name.lower()
+
+    if "root" in res_lower:
+        result["recommendation"] = "Deny. Root access violates zero-standing privileges."
+
+    elif department == "Finance":
+        if "github" in res_lower:
+            result["recommendation"] = "Deny. SoD Violation (Finance -> Codebase)."
+        elif "billing" in res_lower and access_level > 1:
+             result["recommendation"] = "Flag for CFO/Manager review."
+
+    elif department == "Marketing":
+        if "aws_sandbox" in res_lower or "workday_finance" in res_lower:
+            result["recommendation"] = "Deny. Outside department scope."
+        elif "salesforce" in res_lower and access_level > 1:
+            result["recommendation"] = "Flag for Manager review (Data Exfiltration risk)."
+
+    elif department != "Finance" and "billing" in res_lower:
+        result["recommendation"] = "Deny. Non-finance user requesting billing access."
+
     result["department"]   = department
     result["resource"]     = resource_name
     result["access_level"] = access_level

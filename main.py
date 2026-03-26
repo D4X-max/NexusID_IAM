@@ -60,6 +60,8 @@ BIRTHRIGHT_POLICIES = {
     "Engineering": ["GitHub_Repo_Access", "Slack_Engineering_Channel", "AWS_Sandbox"],
     "Sales":       ["Salesforce_Read_Only", "Slack_Sales_Channel"],
     "HR":          ["Workday_Basic", "Slack_General"],
+    "Marketing":   ["Salesforce_Marketing", "Slack_Marketing_Channel", "AWS_Analytics"],
+    "Finance":     ["Workday_Finance", "Slack_Finance_Channel", "AWS_Billing"],
 }
 
 
@@ -256,7 +258,7 @@ async def hire_user(new_user: User, db: Session = Depends(get_db)) -> dict:
 
 # ── Transfer request ──────────────────────────────────────────
 @app.patch("/users/{user_id}/transfer", tags=["Lifecycle"])
-async def transfer_user(user_id: int, new_department: str,
+async def transfer_user(user_id: int, new_department: str, new_job_title: str,
                         db: Session = Depends(get_db)) -> dict:
     """Initiates a transfer — persisted to SQLite, requires manager approval."""
     user = get_user(db, user_id)
@@ -272,10 +274,13 @@ async def transfer_user(user_id: int, new_department: str,
     token = str(uuid.uuid4())
     create_transfer(db, token=token, user_id=user_id,
                     old_department=user.department, new_department=new_department,
+                    old_job_title=user.job_title, new_job_title=new_job_title, # <--- NEW
                     requested_by=user_id, approver_id=user.manager_id)
+    
     append_log(db, actor_id=user_id, action="TRANSFER_REQUESTED",
                target_user_id=user_id, outcome="Pending",
-               details={"token": token, "old": user.department, "new": new_department})
+               details={"token": token, "old": user.department, "new": new_department,
+                        "old_title": user.job_title, "new_title": new_job_title}) # <--- NEW
 
     return {
         "status"         : "PENDING_APPROVAL",
@@ -309,7 +314,10 @@ async def approve_transfer(token: str, manager_id: int,
     old_dep = request.old_department
     new_dep = request.new_department
 
-    update_user_department(db, user.id, new_dep)
+    user.department = new_dep
+    if request.new_job_title:
+        user.job_title = request.new_job_title
+    db.commit() 
     updated_user = get_user(db, user.id)
     logs = await process_mover_event(updated_user, old_dep, db)
 
@@ -489,6 +497,7 @@ def get_pending_transfers(db: Session = Depends(get_db)) -> list:
             "user_id"        : r.user_id,
             "old_department" : r.old_department,
             "new_department" : r.new_department,
+            "new_job_title": r.new_job_title,
             "approver_id"    : r.approver_id,
             "status"         : r.status,
             "created_at"     : r.created_at.isoformat(),
@@ -846,7 +855,15 @@ def get_user_timeline(user_id: int, db: Session = Depends(get_db)) -> dict:
         action_key = log.action.split(" →")[0].strip()
         details    = log.details if isinstance(log.details, dict) else {}
         resource   = details.get("resource_name") or details.get("resource") or ""
-        actor      = "System" if log.actor_id == 0 else f"User {log.actor_id}"
+        
+        # --- NEW ACTOR RESOLUTION ---
+        if log.actor_id == 0:
+            actor = "System"
+        else:
+            actor_record = get_user(db, log.actor_id)
+            actor = actor_record.username if actor_record else f"User {log.actor_id}"
+        # ----------------------------
+        
         ts         = log.timestamp
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)

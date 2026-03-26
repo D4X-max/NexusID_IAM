@@ -72,6 +72,8 @@ class PendingTransferDB(Base):
     user_id        = Column(Integer,  nullable=False)
     old_department = Column(String,   nullable=False)
     new_department = Column(String,   nullable=False)
+    old_job_title  = Column(String,   nullable=True) 
+    new_job_title  = Column(String,   nullable=True)
     requested_by   = Column(Integer,  nullable=False)
     approver_id    = Column(Integer,  nullable=False)
     status         = Column(String,   nullable=False, default="PENDING_APPROVAL")
@@ -212,11 +214,12 @@ def verify_log_integrity(db) -> dict:
 
 
 # ── Transfer helpers ──────────────────────────────────────────
-def create_transfer(db, token, user_id, old_department, new_department,
-                    requested_by, approver_id) -> PendingTransferDB:
+def create_transfer(db, token, user_id, old_department, new_department, 
+                    old_job_title, new_job_title, requested_by, approver_id) -> PendingTransferDB:
     row = PendingTransferDB(
         token=token, user_id=user_id,
         old_department=old_department, new_department=new_department,
+        old_job_title=old_job_title, new_job_title=new_job_title, # ADDED HERE
         requested_by=requested_by, approver_id=approver_id,
         status="PENDING_APPROVAL", created_at=datetime.now(timezone.utc),
     )

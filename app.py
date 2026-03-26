@@ -14,6 +14,8 @@ BIRTHRIGHT = {
     "Engineering": ["GitHub_Repo_Access", "Slack_Engineering_Channel", "AWS_Sandbox"],
     "Sales":       ["Salesforce_Read_Only", "Slack_Sales_Channel"],
     "HR":          ["Workday_Basic", "Slack_General"],
+    "Marketing":   ["Salesforce_Marketing", "Slack_Marketing_Channel", "AWS_Analytics"],
+    "Finance":     ["Workday_Finance", "Slack_Finance_Channel", "AWS_Billing"],
 }
 
 RESOURCE_MAP = {
@@ -23,6 +25,10 @@ RESOURCE_MAP = {
     "aws":        "AWS_Sandbox",
     "slack":      "Slack_General",
     "workday":    "Workday_Basic",
+    "marketing data": "Salesforce_Marketing",
+    "analytics":      "AWS_Analytics",
+    "billing":        "AWS_Billing",
+    "finance docs":   "Workday_Finance",
 }
 
 # ── Page config ───────────────────────────────────────────────
@@ -614,6 +620,15 @@ if "Employee" in view:
 elif "Manager" in view:
     st.markdown('<div class="nx-title">Manager Portal</div>', unsafe_allow_html=True)
     st.markdown('<div class="nx-sub">Approve access requests · View your team</div>', unsafe_allow_html=True)
+    
+    manager_options = {u["id"]: f"{u['username']} ({u['department']})" for u in ALL_USERS} #-- Dynamic Manager Selection
+    current_manager_id = st.selectbox(
+        "Select your manager profile", 
+        list(manager_options.keys()),
+        format_func=lambda x: manager_options[x],
+        key="manager_profile_select"
+    )
+    st.markdown("<br>", unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["✅  Pending Approvals", "👥  My Team", "🔄  Request Transfer", "🚪  Initiate Leaver", "📋  Access Review"])
 
@@ -664,6 +679,10 @@ elif "Manager" in view:
                                     font-family:IBM Plex Mono,monospace'>
                             {t['old_department']} → {t['new_department']}
                         </div>
+                        <div style='font-size:12px;color:#00d4aa;margin-top:4px;
+                    font-family:IBM Plex Mono,monospace'>
+            New Title: {t.get('new_job_title', 'No change')}
+        </div>
                         <div style='font-size:11px;color:#8b949e;margin-top:6px'>
                             Token: {t['token'][:16]}... · Requested: {t['created_at'][:10]}
                         </div>
@@ -674,7 +693,7 @@ elif "Manager" in view:
                         if st.button("✅ Approve", key=f"approve_{t['token']}"):
                             code, resp = api_post(
                                 f"/transfer/{t['token']}/approve",
-                                params={"manager_id": 1}
+                                params={"manager_id": current_manager_id}
                             )
                             if code == 200:
                                 st.success(f"Approved! Granted: {resp.get('granted')} | Revoked: {resp.get('revoked')}")
@@ -685,7 +704,7 @@ elif "Manager" in view:
                         if st.button("❌ Reject", key=f"reject_{t['token']}"):
                             code, resp = api_post(
                                 f"/transfer/{t['token']}/reject",
-                                params={"manager_id": 1, "reason": "Rejected by manager"}
+                                params={"manager_id": current_manager_id, "reason": "Rejected by manager"}
                             )
                             if code == 200:
                                 st.warning(f"Rejected. {resp.get('note')}")
@@ -698,7 +717,7 @@ elif "Manager" in view:
         st.markdown('<div class="nx-header">Direct reports</div>', unsafe_allow_html=True)
 
         # Pull from live API — includes newly hired users under this manager
-        team = [u for u in ALL_USERS if u.get("manager_id") == 1]
+        team = [u for u in ALL_USERS if u.get("manager_id") == current_manager_id]
 
         if not team:
             st.info("No direct reports found.")
@@ -717,41 +736,47 @@ elif "Manager" in view:
                     else:
                         col2.markdown("_No active entitlements_")
 
-    # ── Tab 3: Request transfer ───────────────────────────────
+    # ── Tab 3: Request transfer ──────────────────────────────-
     with tab3:
         st.markdown('<div class="nx-header">Request a department transfer</div>', unsafe_allow_html=True)
 
         # Active users only, pulled from live API
         active_users  = [u for u in ALL_USERS if u["status"] == "Active"]
-        transfer_opts = {u["id"]: f"{u['username']} ({u['department']})" for u in active_users}
+        # Added the current job title to the dropdown for better UI context
+        transfer_opts = {u["id"]: f"{u['username']} ({u['department']} · {u['job_title']})" for u in active_users}
 
         with st.form("transfer_form"):
             t_user_id  = st.selectbox("Employee", list(transfer_opts.keys()),
                                        format_func=lambda x: transfer_opts[x])
-            t_new_dept = st.selectbox("Transfer to", ["Engineering", "Sales", "HR", "Marketing"])
+            t_new_dept = st.selectbox("Transfer to", ["Engineering", "Sales", "HR", "Marketing", "Finance"])
+            
+            # --- NEW TEXTBOX ---
+            t_new_title = st.text_input("New Job Title", placeholder="e.g. Senior Data Engineer")
+            
             t_submit   = st.form_submit_button("Request Transfer")
 
         if t_submit:
-            code, resp = api_patch(f"/users/{t_user_id}/transfer",
-                                   params={"new_department": t_new_dept})
-            if code == 200:
-                st.success("Transfer request created and persisted to SQLite!")
-                st.markdown(f"""
-                <div class="nx-card-accent" style="margin-top:12px">
-                    <div style='font-family:IBM Plex Mono,monospace;font-size:12px;color:#00d4aa'>
-                        APPROVAL TOKEN
-                    </div>
-                    <div style='font-family:IBM Plex Mono,monospace;font-size:13px;
-                                color:#e6edf3;margin-top:6px;word-break:break-all'>
-                        {resp.get('approval_token')}
-                    </div>
-                    <div style='font-size:12px;color:#8b949e;margin-top:8px'>
-                        Survives server restarts — stored in SQLite
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            if not t_new_title:
+                st.warning("Please provide a new job title.")
             else:
-                st.error(str(resp.get("detail", resp)))
+                # Passing the new_job_title to the backend
+                code, resp = api_patch(f"/users/{t_user_id}/transfer",
+                                       params={"new_department": t_new_dept, "new_job_title": t_new_title})
+                if code == 200:
+                    st.success("Transfer request created and persisted to SQLite!")
+                    st.markdown(f"""
+                    <div class="nx-card-accent" style="margin-top:12px">
+                        <div style='font-family:IBM Plex Mono,monospace;font-size:12px;color:#00d4aa'>
+                            APPROVAL TOKEN
+                        </div>
+                        <div style='font-family:IBM Plex Mono,monospace;font-size:13px;
+                                    color:#e6edf3;margin-top:6px;word-break:break-all'>
+                            {resp.get('approval_token')}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.error(str(resp.get("detail", resp)))
 
 
     # ── Tab 4: Initiate Leaver ────────────────────────────────
@@ -768,8 +793,8 @@ elif "Manager" in view:
         """, unsafe_allow_html=True)
 
         # Only show active direct reports
-        my_team_active = [u for u in ALL_USERS
-                          if u.get("manager_id") == 1 and u["status"] == "Active"]
+        my_team_active = [u for u in ALL_USERS 
+                          if u.get("manager_id") == current_manager_id and u["status"] == "Active"]
 
         if not my_team_active:
             st.markdown("""
@@ -807,7 +832,7 @@ elif "Manager" in view:
                 with st.spinner(f"Revoking all access for {selected_user['username']}..."):
                     code, resp = api_post(
                         f"/users/{leaver_uid}/terminate-request",
-                        params={"manager_id": 1, "reason": leaver_reason}
+                        params={"manager_id": current_manager_id, "reason": leaver_reason}
                     )
                 if code == 200:
                     st.success(f"{selected_user['username']} has been offboarded.")
@@ -911,7 +936,7 @@ elif "Manager" in view:
                         if col2.button("Certify", key=f"certify_{u['id']}"):
                             code, resp = api_post(
                                 f"/access-review/{u['id']}/certify",
-                                params={"manager_id": 1, "action": "CERTIFY"}
+                                params={"manager_id": current_manager_id, "action": "CERTIFY"}
                             )
                             if code == 200:
                                 st.success(f"Certified {u['username']}.")
@@ -926,7 +951,7 @@ elif "Manager" in view:
                         if col3.button("Flag", key=f"flag_{u['id']}"):
                             code, resp = api_post(
                                 f"/access-review/{u['id']}/certify",
-                                params={"manager_id": 1, "action": "FLAG_FOR_REDUCTION"}
+                                params={"manager_id": current_manager_id, "action": "FLAG_FOR_REDUCTION"}
                             )
                             if code == 200:
                                 st.warning(f"Flagged {u['username']} for access reduction.")
@@ -1706,8 +1731,7 @@ elif "IT Admin" in view:
                                     <div style='display:flex;justify-content:space-between;
                                                 align-items:center;margin-bottom:4px'>
                                         <div style='font-size:13px;font-weight:600;color:#e6edf3'>
-                                            {ev["description"]}
-                                            {f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
+                                            {ev["description"]}{f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
                                         </div>
                                         <span style='font-size:11px;color:{out_color};
                                                      font-family:IBM Plex Mono,monospace'>
@@ -1732,8 +1756,7 @@ elif "IT Admin" in view:
                                     <div style='display:flex;justify-content:space-between;
                                                 align-items:center;margin-bottom:4px'>
                                         <div style='font-size:13px;font-weight:600;color:#e6edf3'>
-                                            {ev["description"]}
-                                            {f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
+                                            {ev["description"]}{f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
                                         </div>
                                         <span style='font-size:11px;color:{out_color};
                                                      font-family:IBM Plex Mono,monospace'>
