@@ -373,6 +373,45 @@ Per the hackathon brief:
 
 ---
 
+## Database Schema
+---
+
+### `users`
+
+| Column        | Type         | Description                                                                 |
+|--------------|-------------|-----------------------------------------------------------------------------|
+| id           | Integer (PK) | Unique User ID                                                              |
+| username     | String       | Employee username                                                           |
+| department   | String       | Current department (Engineering, Sales, HR, Marketing, Finance)             |
+| job_title    | String       | Current official role                                                       |
+| manager_id   | Integer      | ID of the direct supervisor                                                 |
+| status       | String       | Active, Inactive, or Pending                                                |
+
+---
+
+### `audit_logs` *(Append-only)*
+
+| Column         | Type         | Description                                                                 |
+|---------------|-------------|-----------------------------------------------------------------------------|
+| id            | Integer (PK) | Unique Log ID                                                              |
+| timestamp     | DateTime     | UTC time of action                                                         |
+| actor_id      | Integer      | User who performed the action (0 = System)                                 |
+| action        | String       | Action type (e.g., `JIT_GRANTED`, `AUTO_PROVISION`)                        |
+| integrity_hash| String       | SHA-256(`id + actor + action + target + details + ts`)                     |
+
+---
+
+### `pending_transfers`
+
+| Column           | Type         | Description                                                                 |
+|------------------|-------------|-----------------------------------------------------------------------------|
+| token            | String (PK) | Unique UUID approval token                                                 |
+| old_department   | String       | Original department                                                        |
+| new_department   | String       | Target department                                                          |
+| old_job_title    | String       | Original title before transfer                                             |
+| new_job_title    | String       | New proposed job title                                                     |
+| status           | String       | `PENDING_APPROVAL`, `APPROVED`, or `REJECTED`                              |
+
 ## Tech Stack
 
 | Layer           | Technology                   |
