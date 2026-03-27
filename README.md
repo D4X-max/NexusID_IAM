@@ -131,6 +131,13 @@ NexusID solves all four in a single portal.
 - Prevents access creep — permissions accumulating silently over time
 - Results persist in session state; list updates in-place after each action
 
+### Advanced Security & Bulk Lifecycle
+
+- **Self-Service Secret Rotation** — employees can independently rotate developer API keys via the portal; reduces helpdesk overhead while maintaining a full SHA-256 audit trail
+- **Risk Distribution Heatmap** — IT Admin console includes a visual risk analysis of orphaned accounts using a `pandas` background gradient; identifies high-risk departments (e.g., Engineering vs. Sales) at a glance
+- **Bulk Onboarding** — support for CSV-based mass hiring; IT Admins can provision hundreds of users and their corresponding ABAC birthright access bundles in a single transaction
+- **Enhanced Mover Workflow** — department transfers now support concurrent `new_job_title` updates; ensures identity records and access permissions remain synced during internal transitions
+
 ---
 
 ## Project Structure
@@ -239,6 +246,16 @@ On first run, the database is created automatically and seeded with three defaul
 | `POST` | `/users/{id}/notify-manager` | Simulated Slack notification to manager       |
 | `GET`  | `/transfers/pending`         | All transfer requests                         |
 
+
+### Administrative & Self-Service API
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/users/bulk-hire` | **Bulk Lifecycle:** Provision multiple users and their automated birthright access via a single CSV or JSON list. |
+| `POST` | `/users/{id}/rotate-api-key` | **Self-Service:** Enables users to rotate their own secure developer tokens, reducing IT helpdesk overhead while maintaining audit integrity. |
+| `POST` | `/demo/inject-heatmap` | **Demo Utility:** Injects a mathematical spread of HIGH and MEDIUM risk orphaned accounts to demonstrate the security heatmap. |
+| `GET` | `/audit-log/verify` | **Compliance:** Triggers a comprehensive SHA-256 integrity check across all immutable logs to detect post-write tampering. |
+
 ### Example: Hire a new user
 
 ```bash
@@ -319,32 +336,6 @@ Output: score, level (LOW/MEDIUM/HIGH), recommendation
 | < 0.35      | LOW    | Auto-approve + provision              |
 | 0.35 – 0.65 | MEDIUM | Flag for manager review               |
 | ≥ 0.65      | HIGH   | Block — audit logged, no provisioning |
-
----
-
-## Database Schema
-
-```
-users
-├── id (PK), username, email, department
-├── job_title, manager_id, status
-
-audit_logs (append-only)
-├── id (PK), timestamp, actor_id, action
-├── target_user_id, outcome, details (JSON)
-└── integrity_hash (SHA-256)
-
-pending_transfers
-├── token (PK), user_id, old_department
-├── new_department, requested_by, approver_id
-├── status, created_at, resolved_at
-
-jit_access
-├── id (PK), user_id, resource_name
-├── justification, duration_minutes
-├── granted_at, expires_at, status, revoked_at
-```
-
 ---
 
 ## Scalability Path
@@ -373,44 +364,64 @@ Per the hackathon brief:
 
 ---
 
-## Database Schema
----
-
 ### `users`
 
 | Column        | Type         | Description                                                                 |
 |--------------|-------------|-----------------------------------------------------------------------------|
 | id           | Integer (PK) | Unique User ID                                                              |
 | username     | String       | Employee username                                                           |
+| email        | String       | Employee contact email                                                      |
 | department   | String       | Current department (Engineering, Sales, HR, Marketing, Finance)             |
 | job_title    | String       | Current official role                                                       |
 | manager_id   | Integer      | ID of the direct supervisor                                                 |
 | status       | String       | Active, Inactive, or Pending                                                |
+| created_at   | DateTime     | UTC timestamp of user creation for lifecycle reporting                      |
+
 
 ---
 
 ### `audit_logs` *(Append-only)*
 
-| Column         | Type         | Description                                                                 |
-|---------------|-------------|-----------------------------------------------------------------------------|
-| id            | Integer (PK) | Unique Log ID                                                              |
-| timestamp     | DateTime     | UTC time of action                                                         |
-| actor_id      | Integer      | User who performed the action (0 = System)                                 |
-| action        | String       | Action type (e.g., `JIT_GRANTED`, `AUTO_PROVISION`)                        |
-| integrity_hash| String       | SHA-256(`id + actor + action + target + details + ts`)                     |
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | Integer (PK) | Unique Log ID |
+| **timestamp** | DateTime | UTC time of action |
+| **actor_id** | Integer | User who performed the action (0 = System) |
+| **action** | String | Action type (e.g., `JIT_GRANTED`, `AUTO_PROVISION`) |
+| **target_user_id**| Integer | ID of the user affected by the action |
+| **outcome** | String | Result of the action (e.g., `Success`, `Failed`, `Blocked`) |
+| **details** | JSON | Raw simulated connector response or metadata |
+| **integrity_hash**| String | SHA-256 cryptographic hash for tamper detection |
 
 ---
 
 ### `pending_transfers`
 
-| Column           | Type         | Description                                                                 |
-|------------------|-------------|-----------------------------------------------------------------------------|
-| token            | String (PK) | Unique UUID approval token                                                 |
-| old_department   | String       | Original department                                                        |
-| new_department   | String       | Target department                                                          |
-| old_job_title    | String       | Original title before transfer                                             |
-| new_job_title    | String       | New proposed job title                                                     |
-| status           | String       | `PENDING_APPROVAL`, `APPROVED`, or `REJECTED`                              |
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **token** | String (PK) | Unique UUID approval token |
+| **user_id** | Integer | ID of the user being transferred |
+| **old_department** | String | Original department before move |
+| **new_department** | String | Target department after move |
+| **old_job_title** | String | Original title (Preserves historical role context) |
+| **new_job_title** | String | New proposed job title (Captures "Mover" phase role change) |
+| **status** | String | `PENDING_APPROVAL`, `APPROVED`, or `REJECTED` |
+| **created_at** | DateTime | UTC timestamp when the transfer was requested |
+| **resolved_at** | DateTime | UTC timestamp when the manager took action |
+
+---
+
+### `jit_access`
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | Integer (PK) | Unique Grant ID |
+| **user_id** | Integer | ID of the user receiving elevated access |
+| **resource_name** | String | Sensitive resource (e.g., `AWS_Root`) |
+| **justification** | String | Business reason for temporary access |
+| **duration_minutes**| Integer | Requested window (Auto-revokes on expiry) |
+| **status** | String | Current state: `ACTIVE`, `EXPIRED`, or `REVOKED_EARLY` |
+
 
 ## Tech Stack
 
