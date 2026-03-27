@@ -1276,11 +1276,16 @@ elif "IT Admin" in view:
                     st.error(str(resp.get("detail", resp)))
 
     # ── Tab 3: Audit log ──────────────────────────────────────
+    # ── Tab 3: Immutable Audit Trail ─────────────────────────────
     with tab3:
         st.markdown('<div class="nx-header">Immutable audit trail — read only</div>', unsafe_allow_html=True)
-
-        if st.button("Refresh", key="refresh_audit"):
-            st.rerun()
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                A cryptographically secure, append-only ledger of all identity lifecycle events.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         logs = api_get("/audit-log")
 
@@ -1289,12 +1294,60 @@ elif "IT Admin" in view:
         elif not logs:
             st.info("No audit entries yet.")
         else:
-            actions = ["ALL"] + sorted({l.get("action", "") for l in logs if isinstance(l, dict)})
-            action_filter = st.selectbox("Filter by action", actions)
-            filtered = logs if action_filter == "ALL" else [
-                l for l in logs if l.get("action") == action_filter
-            ]
+            # ── 1. TOP ACTION BAR ──
+            col_verify, col_dl, col_refresh = st.columns([2, 2, 2])
 
+            with col_verify:
+                if st.button("Run Integrity Check", width="stretch", type="primary"):
+                    with st.spinner("Re-computing SHA-256 hashes..."):
+                        code, resp = api_get("/audit-log/verify")
+                        if code == 200:
+                            if resp.get("tampered"):
+                                st.error(f"TAMPERING DETECTED in rows: {resp['tampered']}")
+                            else:
+                                st.success(f"Cryptographic integrity verified across all {resp.get('total')} logs.")
+                        else:
+                            st.error("Failed to reach verification endpoint.")
+
+            with col_dl:
+                import pandas as pd
+                df_logs = pd.DataFrame(logs)
+                csv_buffer = df_logs.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="Download CSV",
+                    data=csv_buffer,
+                    file_name="nexusid_audit_logs.csv",
+                    mime="text/csv",
+                    width="stretch"
+                )
+                
+            with col_refresh:
+                if st.button("Refresh Logs", width="stretch", key="refresh_audit"):
+                    st.rerun()
+
+            st.markdown("<div style='margin-bottom:16px'></div>", unsafe_allow_html=True)
+
+            # ── 2. FILTERS (Dropdown + Search) ──
+            col_f1, col_f2 = st.columns(2)
+            actions = ["ALL"] + sorted({l.get("action", "") for l in logs if isinstance(l, dict)})
+            action_filter = col_f1.selectbox("Filter by action", actions)
+            search_query = col_f2.text_input("🔍 Search (Actor, Target, Hash)", placeholder="Type to filter...")
+
+            # Apply filters
+            filtered = logs
+            if action_filter != "ALL":
+                filtered = [l for l in filtered if l.get("action") == action_filter]
+                
+            if search_query:
+                q = search_query.lower()
+                filtered = [
+                    l for l in filtered 
+                    if q in str(l.get("actor_id")).lower() 
+                    or q in str(l.get("target_user_id")).lower()
+                    or q in str(l.get("integrity_hash", "")).lower()
+                ]
+
+            # ── 3. SCROLLABLE CONTAINER WITH CUSTOM HTML ──
             ACTION_COLORS = {
                 "AUTO_PROVISION"    : "#00d4aa",
                 "AUTO_REVOKE"       : "#e3b341",
@@ -1329,17 +1382,19 @@ elif "IT Admin" in view:
                     f"</tr>"
                 )
 
-            st.markdown(f"""
-            <div style='overflow-x:auto'>
-            <table class="nx-table">
-                <thead><tr>
-                    <th>#</th><th>Timestamp</th><th>Action</th>
-                    <th>Actor</th><th>Target</th><th>Outcome</th><th>Hash</th>
-                </tr></thead>
-                <tbody>{rows_html}</tbody>
-            </table>
-            </div>
-            """, unsafe_allow_html=True)
+            # This container locks the height to 600px and adds the scrollbar!
+            with st.container(height=600, border=True):
+                st.markdown(f"""
+                <div style='overflow-x:auto'>
+                <table class="nx-table" style="width:100%">
+                    <thead><tr>
+                        <th>#</th><th>Timestamp</th><th>Action</th>
+                        <th>Actor</th><th>Target</th><th>Outcome</th><th>Hash</th>
+                    </tr></thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+                </div>
+                """, unsafe_allow_html=True)
 
             # ── Download button ───────────────────────────────
             import csv, io
