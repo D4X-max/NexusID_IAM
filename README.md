@@ -131,6 +131,13 @@ NexusID solves all four in a single portal.
 - Prevents access creep — permissions accumulating silently over time
 - Results persist in session state; list updates in-place after each action
 
+### Advanced Security & Bulk Lifecycle
+
+- **Self-Service Secret Rotation** — employees can independently rotate developer API keys via the portal; reduces helpdesk overhead while maintaining a full SHA-256 audit trail
+- **Risk Distribution Heatmap** — IT Admin console includes a visual risk analysis of orphaned accounts using a `pandas` background gradient; identifies high-risk departments (e.g., Engineering vs. Sales) at a glance
+- **Bulk Onboarding** — support for CSV-based mass hiring; IT Admins can provision hundreds of users and their corresponding ABAC birthright access bundles in a single transaction
+- **Enhanced Mover Workflow** — department transfers now support concurrent `new_job_title` updates; ensures identity records and access permissions remain synced during internal transitions
+
 ---
 
 ## Project Structure
@@ -239,6 +246,16 @@ On first run, the database is created automatically and seeded with three defaul
 | `POST` | `/users/{id}/notify-manager` | Simulated Slack notification to manager       |
 | `GET`  | `/transfers/pending`         | All transfer requests                         |
 
+
+### Administrative & Self-Service API
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/users/bulk-hire` | **Bulk Lifecycle:** Provision multiple users and their automated birthright access via a single CSV or JSON list. |
+| `POST` | `/users/{id}/rotate-api-key` | **Self-Service:** Enables users to rotate their own secure developer tokens, reducing IT helpdesk overhead while maintaining audit integrity. |
+| `POST` | `/demo/inject-heatmap` | **Demo Utility:** Injects a mathematical spread of HIGH and MEDIUM risk orphaned accounts to demonstrate the security heatmap. |
+| `GET` | `/audit-log/verify` | **Compliance:** Triggers a comprehensive SHA-256 integrity check across all immutable logs to detect post-write tampering. |
+
 ### Example: Hire a new user
 
 ```bash
@@ -324,26 +341,27 @@ Output: score, level (LOW/MEDIUM/HIGH), recommendation
 
 ## Database Schema
 
-```
-users
+**users**
 ├── id (PK), username, email, department
 ├── job_title, manager_id, status
+└── created_at (DateTime) — Automatically tracked for lifecycle reporting
 
-audit_logs (append-only)
+**audit_logs** (append-only)
 ├── id (PK), timestamp, actor_id, action
 ├── target_user_id, outcome, details (JSON)
 └── integrity_hash (SHA-256)
 
-pending_transfers
+**pending_transfers**
 ├── token (PK), user_id, old_department
 ├── new_department, requested_by, approver_id
 ├── status, created_at, resolved_at
+├── old_job_title (String) — Preserves historical role context
+└── new_job_title (String) — Captures the new role assigned during the "Mover" phase
 
-jit_access
+**jit_access**
 ├── id (PK), user_id, resource_name
 ├── justification, duration_minutes
 ├── granted_at, expires_at, status, revoked_at
-```
 
 ---
 
