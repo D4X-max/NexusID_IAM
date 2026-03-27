@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
 sys.path.insert(0, "../simulated_connectors")
 
-from models      import AccessRequest, User
+from models import User, AuditLog, AccessRequest, UserCreate
 from risk_engine import assess_request
 from database import (
     init_db, get_db, SessionLocal,
@@ -20,7 +20,7 @@ from database import (
     get_all_users, get_user, upsert_user,
     update_user_status, update_user_department, UserDB,
     create_jit_grant, get_active_jit_grants, get_all_jit_grants,
-    expire_jit_grant, revoke_jit_grant_early, JITAccessDB,
+    expire_jit_grant, revoke_jit_grant_early, JITAccessDB,create_user,
 )
 from simulated_connectors.mock_engine import mock_api_call
 
@@ -1173,3 +1173,55 @@ def get_jit_grants(db: Session = Depends(get_db)) -> list:
         }
         for g in grants
     ]
+    
+#----- BULK HIRING ENDPOINT  -----
+@app.post("/users/bulk-hire", tags=["Lifecycle"])
+async def bulk_hire_users(users: list[UserCreate], db: Session = Depends(get_db)):
+    results = []
+    errors = []
+    
+    for user_item in users:
+        try:
+            # Reusing your core onboarding logic
+            res = await onboard_single_user(user_item, db)
+            results.append(res)
+        except Exception as e:
+            # Capture individual failures so one bad row doesn't kill the whole batch
+            errors.append({"id": user_item.id, "username": user_item.username, "error": str(e)})
+            
+    return {
+        "success_count": len(results),
+        "failed_count": len(errors),
+        "details": results,
+        "errors": errors
+    }
+    
+#--- Helper function for onboarding
+async def onboard_single_user(user_data: UserCreate, db: Session):
+    # Check if user exists
+    existing = get_user(db, user_data.id)
+    if existing:
+        raise Exception(f"User ID {user_data.id} already exists")
+
+    # 1. Create User in DB
+    user = create_user(db, user_data)
+    
+    # 2. Trigger Birthright Provisioning
+    dept = user.department
+    entitlements = BIRTHRIGHT_POLICIES.get(dept, ["Slack_General"])
+    
+    # 3. Write Audit Logs
+    for ent in entitlements:
+        append_log(db, actor_id=0, action="AUTO_PROVISION", 
+                   target_user_id=user.id, outcome="Success",
+                   details={"resource": ent, "trigger": "Onboarding"})
+        
+    from database import update_user_status
+    user = update_user_status(db, user.id, "Active")
+        
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "status": user.status,
+        "provisioned": entitlements
+    }

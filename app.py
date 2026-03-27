@@ -6,6 +6,8 @@ Run: streamlit run app.py
 
 import streamlit as st
 import requests
+import pandas as pd 
+import io
 
 API = "http://127.0.0.1:8000"
 
@@ -341,7 +343,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
-    if st.button("Back to home", use_container_width=True):
+    if st.button("Back to home", width="stretch"):
         st.session_state.selected_role = None
         st.rerun()
 
@@ -1100,6 +1102,61 @@ elif "IT Admin" in view:
             </div>
         </div>
         """, unsafe_allow_html=True)
+        st.markdown("---")
+        st.markdown('<div class="nx-header">Bulk Onboarding (CSV / Manual Entry)</div>', unsafe_allow_html=True)    
+        import pandas as pd
+        import io
+
+        # 1. Define the required schema/template
+        template_data = pd.DataFrame([
+            {"id": 201, "username": "alice", "email": "alice@company.com", "department": "Engineering", "job_title": "Software Engineer", "manager_id": 1},
+            {"id": 202, "username": "bob", "email": "bob@company.com", "department": "Sales", "job_title": "SDR", "manager_id": 1}
+        ])
+
+        # 2. Provide a downloadable template
+        col_down, col_up = st.columns([1, 2])
+        csv_buffer = io.StringIO()
+        template_data.to_csv(csv_buffer, index=False)
+        col_down.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        col_down.download_button(
+            label="📥 Download CSV Template",
+            data=csv_buffer.getvalue(),
+            file_name="nexusid_onboarding_template.csv",
+            mime="text/csv",
+            width="stretch"
+        )
+
+        # 3. Add the File Uploader
+        uploaded_file = col_up.file_uploader("Upload filled CSV file", type=["csv"])
+
+        # 4. Determine which data to show in the editor
+        if uploaded_file is not None:
+            try:
+                display_df = pd.read_csv(uploaded_file)
+                st.success("CSV loaded successfully! Review and edit data below before provisioning:")
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
+                display_df = template_data
+        else:
+            display_df = template_data
+            st.write("Upload a CSV above, or manually edit the template below:")
+
+        # 5. Display the Data Editor
+        bulk_df = st.data_editor(display_df, num_rows="dynamic", width="stretch", key="bulk_onboard_editor")
+
+        # 6. The Provisioning Action
+        if st.button("🚀 Bulk Provision Users", type="primary"):
+            users_to_hire = bulk_df.to_dict(orient="records")
+            with st.spinner(f"Provisioning {len(users_to_hire)} users..."):
+                code, resp = api_post("/users/bulk-hire", data=users_to_hire)
+                
+                if code == 200:
+                    st.success(f"Successfully onboarded {resp['success_count']} users!")
+                    if resp['failed_count'] > 0:
+                        st.warning(f"Failed to onboard {resp['failed_count']} users.")
+                        st.json(resp['errors'])  # Shows exactly which rows failed and why
+                else:
+                    st.error("Bulk onboarding failed. Check API connectivity.")
 
         with st.form("hire_form"):
             h_col1, h_col2 = st.columns(2)

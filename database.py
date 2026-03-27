@@ -181,6 +181,22 @@ def update_user_department(db, user_id: int, department: str) -> UserDB:
         db.refresh(user)
     return user
 
+def create_user(db, user_data) -> UserDB:
+    """Creates a new user directly from a Pydantic model"""
+    db_user = UserDB(
+        id=user_data.id,
+        username=user_data.username,
+        email=user_data.email,
+        department=user_data.department,
+        job_title=user_data.job_title,
+        manager_id=user_data.manager_id,
+        status=user_data.status
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
 
 # ── Audit log helpers ─────────────────────────────────────────
 def append_log(db, actor_id, action, target_user_id, outcome, details,

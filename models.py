@@ -35,3 +35,12 @@ class ProvisioningResult(BaseModel):
     action: str  # "Grant" or "Revoke"
     timestamp: datetime = datetime.now()
     details: Dict[str, Any]  # Raw response / debug info
+    
+class UserCreate(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    department: str
+    job_title: str
+    manager_id: Optional[int]
+    status: str = "Pending"
