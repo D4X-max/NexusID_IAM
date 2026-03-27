@@ -1275,7 +1275,6 @@ elif "IT Admin" in view:
                 else:
                     st.error(str(resp.get("detail", resp)))
 
-    # ── Tab 3: Audit log ──────────────────────────────────────
     # ── Tab 3: Immutable Audit Trail ─────────────────────────────
     with tab3:
         st.markdown('<div class="nx-header">Immutable audit trail — read only</div>', unsafe_allow_html=True)
@@ -1295,32 +1294,56 @@ elif "IT Admin" in view:
             st.info("No audit entries yet.")
         else:
             # ── 1. TOP ACTION BAR ──
-            col_verify, col_dl, col_refresh = st.columns([2, 2, 2])
+            col_verify, col_dl, col_soc2, col_refresh = st.columns([5, 4, 4, 4])
 
             with col_verify:
                 if st.button("Run Integrity Check", width="stretch", type="primary"):
                     with st.spinner("Re-computing SHA-256 hashes..."):
-                        code, resp = api_get("/audit-log/verify")
-                        if code == 200:
+                        # FIX: api_get only returns one value (the response dict)
+                        resp = api_get("/audit-log/verify")
+                        
+                        # Check if the API returned our expected data or an error string
+                        if isinstance(resp, dict) and "error" in resp:
+                            st.error(f"Failed to verify logs: {resp['error']}")
+                        elif resp is not None:
                             if resp.get("tampered"):
                                 st.error(f"TAMPERING DETECTED in rows: {resp['tampered']}")
                             else:
                                 st.success(f"Cryptographic integrity verified across all {resp.get('total')} logs.")
                         else:
-                            st.error("Failed to reach verification endpoint.")
+                            st.error("Received an empty response from the server.")
 
             with col_dl:
                 import pandas as pd
                 df_logs = pd.DataFrame(logs)
                 csv_buffer = df_logs.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="Download CSV",
+                    label="Full Log CSV",
                     data=csv_buffer,
                     file_name="nexusid_audit_logs.csv",
                     mime="text/csv",
                     width="stretch"
                 )
                 
+            with col_soc2:
+                # NEW: SOC 2 Compliance Filter
+                if not df_logs.empty and "action" in df_logs.columns:
+                    # Isolate only the events an auditor cares about
+                    critical_actions = ["EMERGENCY_REVOKE", "TRANSFER_APPROVED", "BLOCKED", "SECRET_ROTATED"]
+                    soc2_df = df_logs[df_logs['action'].isin(critical_actions)]
+                    soc2_buffer = soc2_df.to_csv(index=False).encode('utf-8')
+                    
+                    st.download_button(
+                        label="SOC 2 Report",
+                        data=soc2_buffer,
+                        file_name="nexusid_soc2_compliance.csv",
+                        mime="text/csv",
+                        width="stretch",
+                        help="Exports only critical access modifications, blocked attempts, and revocations for auditors."
+                    )
+                else:
+                    st.button("SOC 2 Report", disabled=True, width="stretch")
+
             with col_refresh:
                 if st.button("Refresh Logs", width="stretch", key="refresh_audit"):
                     st.rerun()
