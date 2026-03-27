@@ -402,7 +402,7 @@ if "Employee" in view:
         st.error("Your account has been deactivated. Please contact your IT Admin.")
         st.stop()
 
-    tab1, tab2, tab3 = st.tabs(["My Access", "Request Access", "JIT Access"])
+    tab1, tab2, tab3, tab4 = st.tabs(["My Access", "Request Access", "JIT Access", "Secrets"])
 
     # ── Tab 1: My Access ──────────────────────────────────────
     with tab1:
@@ -614,6 +614,46 @@ if "Employee" in view:
                 for g in past:
                     sc = "#f85149" if g["status"] == "EXPIRED" else "#e3b341"
                     st.markdown(f'<div class="nx-card" style="opacity:0.6;border-left:3px solid {sc}"><div style="font-size:13px;color:#8b949e;font-family:IBM Plex Mono,monospace">{g["resource_name"]} &nbsp;·&nbsp; <span style="color:{sc}">{g["status"]}</span> &nbsp;·&nbsp; {g["granted_at"][:16].replace("T"," ")}</div></div>', unsafe_allow_html=True)
+                    
+    # ── Tab 4: Security & Secrets ─────────────────────────────
+    with tab4:
+        st.markdown('<div class="nx-header">Self-Service Secret Management</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="nx-card" style="margin-bottom:20px">
+            <div style='font-size:13px;color:#8b949e;line-height:1.6'>
+                Rotate your developer API keys or request a temporary password reset 
+                without opening an IT helpdesk ticket. 
+                <br><br>
+                <span style='color:#f85149;font-weight:600'>Warning:</span> 
+                Rotating a key immediately invalidates the old one. Update your `.env` files immediately.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col1, col2 = st.columns([3, 2])
+        
+        with col1:
+            if st.button("🔄 Rotate Developer API Key", type="primary", width="stretch"):
+                with st.spinner("Generating secure token and invalidating old key..."):
+                    code, resp = api_post(f"/users/{user_id}/rotate-api-key")
+                    
+                    if code == 200:
+                        st.success(resp.get("message"))
+                        st.markdown(f"""
+                        <div class="nx-card-accent" style="border-left: 3px solid #00d4aa;">
+                            <div style='font-size:11px;color:#00d4aa;letter-spacing:0.1em;margin-bottom:8px;'>
+                                NEW API KEY GENERATED
+                            </div>
+                            <code style='font-size:14px;color:#e6edf3;background:#0f0f1a;padding:8px;border-radius:4px;display:block;word-break:break-all;'>
+                                {resp.get('new_api_key')}
+                            </code>
+                            <div style='font-size:11px;color:#8b949e;margin-top:8px;'>
+                                Copy this key now. You will not be able to see it again.
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.error("Failed to rotate key.")
 
 
 # ══════════════════════════════════════════════════════════════

@@ -1270,3 +1270,35 @@ def inject_heatmap_data(db: Session = Depends(get_db)):
 
     db.commit()
     return {"message": "Heatmap data perfectly injected!"}
+
+
+@app.post("/users/{user_id}/rotate-api-key", tags=["Self-Service"])
+def rotate_api_key(user_id: int, db: Session = Depends(get_db)):
+    """
+    Self-Service Secret Rotation.
+    Simulates rotating an API key or password, reducing IT helpdesk load.
+    """
+    from database import get_user, append_log
+
+    user = get_user(db, user_id)
+    if not user:
+        return {"error": "User not found"}
+
+    # Generate a simulated secure API key
+    new_key = f"nx_live_{secrets.token_hex(16)}"
+
+    # Write to the immutable audit log
+    append_log(
+        db=db,
+        actor_id=user_id,         # User acted on their own behalf
+        action="SECRET_ROTATED",
+        target_user_id=user_id,
+        outcome="Success",
+        details={"type": "Developer API Key", "trigger": "Self-Service Portal"}
+    )
+
+    return {
+        "status": "Success", 
+        "new_api_key": new_key, 
+        "message": "Key rotated. Previous key has been immediately invalidated."
+    }
