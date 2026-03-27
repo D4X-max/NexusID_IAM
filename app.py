@@ -1016,7 +1016,12 @@ elif "IT Admin" in view:
 
     # ── Tab 1: Dashboard ──────────────────────────────────────
     with tab1:
-        st.markdown('<div class="nx-header">System overview</div>', unsafe_allow_html=True)
+        # Create columns to put the title and refresh button on the same line
+        col_title, col_btn = st.columns([5, 1])
+        col_title.markdown('<div class="nx-header">System overview</div>', unsafe_allow_html=True)
+        
+        if col_btn.button("Refresh", key="refresh_dashboard", use_container_width=True):
+            st.rerun()
 
         verify    = api_get("/audit-log/verify")
         transfers = api_get("/transfers/pending")
@@ -1159,7 +1164,7 @@ elif "IT Admin" in view:
         template_data.to_csv(csv_buffer, index=False)
         col_down.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
         col_down.download_button(
-            label="📥 Download CSV Template",
+            label="Download CSV Template",
             data=csv_buffer.getvalue(),
             file_name="nexusid_onboarding_template.csv",
             mime="text/csv",
@@ -1185,7 +1190,7 @@ elif "IT Admin" in view:
         bulk_df = st.data_editor(display_df, num_rows="dynamic", width="stretch", key="bulk_onboard_editor")
 
         # 6. The Provisioning Action
-        if st.button("🚀 Bulk Provision Users", type="primary"):
+        if st.button("Bulk Provision Users", type="primary"):
             users_to_hire = bulk_df.to_dict(orient="records")
             with st.spinner(f"Provisioning {len(users_to_hire)} users..."):
                 code, resp = api_post("/users/bulk-hire", data=users_to_hire)
@@ -1386,16 +1391,28 @@ elif "IT Admin" in view:
             for log in reversed(filtered):
                 action    = log.get("action", "")
                 color     = ACTION_COLORS.get(action.split(" →")[0].strip(), "#8b949e")
-                ts        = log.get("timestamp", "")[:19].replace("T", " ")
+                
+                # --- NEW ACCURATE TIME LOGIC ---
+                from datetime import datetime, timezone
+                # Parse the UTC string from API
+                ts_str = log.get("timestamp", "")
+                ts_utc = datetime.fromisoformat(ts_str)
+                
+                # Convert to local system time (e.g., IST)
+                ts_local = ts_utc.astimezone() 
+                ts_display = ts_local.strftime("%Y-%m-%d %H:%M:%S")
+                # -------------------------------
+
                 actor     = "SYSTEM" if log.get("actor_id") == 0 else f"user:{log.get('actor_id')}"
                 outcome   = log.get("outcome", "")
                 out_color = ("#00d4aa" if outcome == "Success"
                              else "#f85149" if outcome in ("Failed", "Blocked")
                              else "#e3b341")
+                
                 rows_html += (
                     f"<tr>"
                     f"<td><code style='font-size:11px;color:#8b949e'>{log.get('id')}</code></td>"
-                    f"<td style='font-size:12px;color:#8b949e;font-family:IBM Plex Mono,monospace'>{ts}</td>"
+                    f"<td style='font-size:12px;color:#8b949e;font-family:IBM Plex Mono,monospace'>{ts_display}</td>" # Use ts_display here
                     f"<td style='font-family:IBM Plex Mono,monospace;font-size:12px;color:{color}'>{action}</td>"
                     f"<td style='font-size:12px;color:#8b949e'>{actor}</td>"
                     f"<td style='font-size:12px'>user:{log.get('target_user_id')}</td>"
@@ -1933,38 +1950,37 @@ elif "IT Admin" in view:
                     for i, ev in enumerate(events):
                         cat    = ev.get("category", "admin")
                         color, bg = CATEGORY_COLORS.get(cat, ("#8b949e", "#161622"))
-                        ts     = ev.get("timestamp","")[:19].replace("T"," ")
-                        res    = ev.get("resource","")
-                        actor  = ev.get("actor","System")
-                        outcome = ev.get("outcome","")
+                        
+                        # --- ACCURATE LOCAL TIME LOGIC ---
+                        from datetime import datetime
+                        ts_str = ev.get("timestamp", "")
+                        # Parse UTC from API and convert to local system time (IST)
+                        ts_utc = datetime.fromisoformat(ts_str)
+                        ts_local = ts_utc.astimezone() 
+                        ts_display = ts_local.strftime("%Y-%m-%d %H:%M:%S")
+                        # ---------------------------------
+
+                        res    = ev.get("resource", "")
+                        actor  = ev.get("actor", "System")
+                        outcome = ev.get("outcome", "")
                         out_color = "#00d4aa" if outcome in ("Success","Certified")                                     else "#f85149" if outcome in ("Failed","Blocked","Rejected")                                     else "#e3b341"
 
                         # Connector line except last
                         if i < len(events) - 1:
                             st.markdown(f"""
                             <div style='display:flex;align-items:flex-start;gap:16px;margin-bottom:0'>
-                                <div style='display:flex;flex-direction:column;align-items:center;flex-shrink:0'>
-                                    <div style='width:12px;height:12px;border-radius:50%;
-                                                background:{color};margin-top:14px;flex-shrink:0'></div>
-                                    <div style='width:1px;height:100%;min-height:40px;
-                                                background:{color}44;margin-top:4px'></div>
-                                </div>
-                                <div class="nx-card" style="flex:1;margin-bottom:4px;
-                                                            border-left:3px solid {color};
-                                                            background:{bg}">
-                                    <div style='display:flex;justify-content:space-between;
-                                                align-items:center;margin-bottom:4px'>
+                                ...
+                                <div class="nx-card" style="flex:1;margin-bottom:4px;border-left:3px solid {color};background:{bg}">
+                                    <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px'>
                                         <div style='font-size:13px;font-weight:600;color:#e6edf3'>
                                             {ev["description"]}{f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
                                         </div>
-                                        <span style='font-size:11px;color:{out_color};
-                                                     font-family:IBM Plex Mono,monospace'>
+                                        <span style='font-size:11px;color:{out_color};font-family:IBM Plex Mono,monospace'>
                                             {outcome}
                                         </span>
                                     </div>
-                                    <div style='font-size:11px;color:#8b949e;
-                                                font-family:IBM Plex Mono,monospace'>
-                                        {ts} &nbsp;·&nbsp; {actor}
+                                    <div style='font-size:11px;color:#8b949e;font-family:IBM Plex Mono,monospace'>
+                                        {ts_display} &nbsp;·&nbsp; {actor}  
                                     </div>
                                 </div>
                             </div>
@@ -1972,27 +1988,21 @@ elif "IT Admin" in view:
                         else:
                             st.markdown(f"""
                             <div style='display:flex;align-items:flex-start;gap:16px'>
-                                <div style='width:12px;height:12px;border-radius:50%;
-                                            background:{color};margin-top:14px;flex-shrink:0'></div>
-                                <div class="nx-card" style="flex:1;margin-bottom:4px;
-                                                            border-left:3px solid {color};
-                                                            background:{bg}">
-                                    <div style='display:flex;justify-content:space-between;
-                                                align-items:center;margin-bottom:4px'>
+                                ...
+                                <div class="nx-card" style="flex:1;margin-bottom:4px;border-left:3px solid {color};background:{bg}">
+                                    <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px'>
                                         <div style='font-size:13px;font-weight:600;color:#e6edf3'>
                                             {ev["description"]}{f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px;color:{color};margin-left:8px'>{res}</span>" if res else ""}
                                         </div>
-                                        <span style='font-size:11px;color:{out_color};
-                                                     font-family:IBM Plex Mono,monospace'>
+                                        <span style='font-size:11px;color:{out_color};font-family:IBM Plex Mono,monospace'>
                                             {outcome}
                                         </span>
                                     </div>
-                                    <div style='font-size:11px;color:#8b949e;
-                                                font-family:IBM Plex Mono,monospace'>
-                                        {ts} &nbsp;·&nbsp; {actor}
+                                    <div style='font-size:11px;color:#8b949e;font-family:IBM Plex Mono,monospace'>
+                                        {ts_display} &nbsp;·&nbsp; {actor}  # <--- CHANGE THIS ONE TOO
                                     </div>
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
-                            
-                            
+                                    
+                                    

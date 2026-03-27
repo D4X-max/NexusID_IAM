@@ -48,6 +48,7 @@ class UserDB(Base):
     job_title   = Column(String,  nullable=False)
     manager_id  = Column(Integer, nullable=True)
     status      = Column(String,  nullable=False, default="Pending")
+    created_at  = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 # ── Table 2: Audit log ────────────────────────────────────────
@@ -55,7 +56,7 @@ class AuditLogDB(Base):
     __tablename__ = "audit_logs"
 
     id             = Column(Integer,  primary_key=True, index=True)
-    timestamp      = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     actor_id       = Column(Integer,  nullable=False)
     action         = Column(String,   nullable=False)
     target_user_id = Column(Integer,  nullable=False)
@@ -97,8 +98,8 @@ class JITAccessDB(Base):
     resource_name    = Column(String,   nullable=False)
     justification    = Column(String,   nullable=False)
     duration_minutes = Column(Integer,  nullable=False)
-    granted_at       = Column(DateTime, nullable=False)
-    expires_at       = Column(DateTime, nullable=False)
+    granted_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
     status           = Column(String,   nullable=False, default="ACTIVE")
     revoked_at       = Column(DateTime, nullable=True)
 
@@ -106,7 +107,10 @@ class JITAccessDB(Base):
 def _normalize_ts(ts) -> str:
     if isinstance(ts, str):
         ts = datetime.fromisoformat(ts)
-    return ts.replace(tzinfo=None).isoformat()
+    # Ensure it's in UTC before converting to string for the hash
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc).isoformat()
 
 def _normalize_details(details) -> dict:
     if isinstance(details, str):
