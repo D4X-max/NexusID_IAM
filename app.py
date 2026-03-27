@@ -1537,14 +1537,15 @@ elif "IT Admin" in view:
             st.error("Could not reach API.")
 
     # ── Tab 6: Orphaned Account Scanner ──────────────────────
+    # ── Tab 6: Security Analytics & Orphan Scanner ───────────────
     with tab6:
-        st.markdown('<div class="nx-header">Orphaned account detection</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nx-header">Security Posture & Orphaned Accounts</div>', unsafe_allow_html=True)
         st.markdown("""
         <div class="nx-card" style="margin-bottom:20px">
             <div style='font-size:13px;color:#8b949e;line-height:1.6'>
-                Scans for <span style='color:#f85149;font-weight:600'>Active</span>
-                users with no recent audit activity — accounts that were never properly
-                offboarded. These are a leading cause of data breaches and compliance failures.
+                Identifies <span style='color:#f85149;font-weight:600'>Standing Privileges</span> 
+                associated with orphaned accounts (Active users with no recent activity). 
+                Use the heatmap to identify which departments carry the highest identity risk.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1554,9 +1555,9 @@ elif "IT Admin" in view:
             "Flag if inactive for (days)", min_value=1, max_value=365, value=30
         )
 
-        if col_scan.button("Run Scan", type="primary"):
-            with st.spinner("Scanning all active accounts..."):
-                st.session_state.orphan_result       = api_get(f"/users/orphaned-check?inactive_days={inactive_days}")
+        if col_scan.button("Run Security Scan", type="primary"):
+            with st.spinner("Scanning active accounts and calculating department risk..."):
+                st.session_state.orphan_result = api_get(f"/users/orphaned-check?inactive_days={inactive_days}")
                 st.session_state.orphan_inactive_days = inactive_days
 
         if col_clear.button("Clear", key="clear_orphan"):
@@ -1572,42 +1573,90 @@ elif "IT Admin" in view:
                 orphaned = result.get("orphaned", [])
                 clean    = result.get("clean", [])
 
-                # Metrics
+                # ── 1. Top Level Metrics ──
                 c1, c2, c3 = st.columns(3)
                 orph_color = "#f85149" if orphaned else "#00d4aa"
                 c1.markdown(f"""<div class="nx-metric">
                     <div class="val" style="color:{orph_color}">{len(orphaned)}</div>
-                    <div class="lbl">Orphaned accounts</div></div>""", unsafe_allow_html=True)
+                    <div class="lbl">Orphaned Accounts</div></div>""", unsafe_allow_html=True)
                 c2.markdown(f"""<div class="nx-metric">
                     <div class="val">{len(clean)}</div>
-                    <div class="lbl">Clean accounts</div></div>""", unsafe_allow_html=True)
+                    <div class="lbl">Healthy Accounts</div></div>""", unsafe_allow_html=True)
                 c3.markdown(f"""<div class="nx-metric">
                     <div class="val">{result.get("total_active", 0)}</div>
-                    <div class="lbl">Total scanned</div></div>""", unsafe_allow_html=True)
+                    <div class="lbl">Active Users Scanned</div></div>""", unsafe_allow_html=True)
 
-                st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='margin-top:32px'></div>", unsafe_allow_html=True)
 
                 if not orphaned:
                     st.markdown("""
                     <div class="nx-card" style="text-align:center;padding:40px;border-left:3px solid #00d4aa">
                         <div style='font-size:28px;margin-bottom:8px'>✓</div>
-                        <div style='color:#00d4aa;font-size:15px;font-weight:600'>No orphaned accounts detected</div>
+                        <div style='color:#00d4aa;font-size:15px;font-weight:600'>Zero Standing Privilege Risk</div>
                         <div style='color:#8b949e;font-size:13px;margin-top:6px'>
-                            All active users have recent audit activity.
+                            All active users have recent audit activity. No heatmap data to display.
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
                 else:
+                    # ── 2. NEW: The Risk Distribution Heatmap ──
+                    import pandas as pd
+                    st.markdown('<div class="nx-header">Risk Distribution Heatmap</div>', unsafe_allow_html=True)
+                    
+                    df = pd.DataFrame(orphaned)
+                    
+                    heatmap_df = df.groupby(['department', 'risk']).size().unstack(fill_value=0)
+                    
+                    for col in ['HIGH', 'MEDIUM']:
+                        if col not in heatmap_df.columns:
+                            heatmap_df[col] = 0
+                            
+                    heatmap_df = heatmap_df[['HIGH', 'MEDIUM']].sort_values(by='HIGH', ascending=False)
+                    heatmap_df.index.name = "Department"
+
+                    styled_heatmap = heatmap_df.style.background_gradient(
+                        cmap='Reds', subset=['HIGH']
+                    ).background_gradient(
+                        cmap='Oranges', subset=['MEDIUM']
+                    ).format("{:.0f}")
+
+                    # Using width="stretch" to comply with the 2026 Streamlit standard
+                    st.dataframe(styled_heatmap, width="stretch")
+                    st.markdown("<div style='margin-bottom:24px'></div>", unsafe_allow_html=True)
+
+                    # ── 3. The Actionable List ──
+                    col_bulk, _ = st.columns([1, 4])
                     st.markdown(
                         f'<div class="nx-header" style="color:#f85149">'
-                        f'{len(orphaned)} orphaned account{"s" if len(orphaned) > 1 else ""} found</div>',
+                        f'Action Required: {len(orphaned)} orphaned account{"s" if len(orphaned) > 1 else ""}</div>',
                         unsafe_allow_html=True
                     )
+                    
+                    # NEW: The Bulk Offboard Button
+                    if col_bulk.button("🚨 Bulk Offboard All", type="primary", width="stretch"):
+                        with st.spinner(f"Executing kill switch for {len(orphaned)} accounts..."):
+                            success_count = 0
+                            for u in orphaned:
+                                code, resp = api_patch(f"/users/{u['id']}/offboard")
+                                if code == 200:
+                                    success_count += 1
+                                    
+                            if success_count == len(orphaned):
+                                st.success(f"Successfully offboarded all {success_count} accounts!")
+                            else:
+                                st.warning(f"Completed {success_count}/{len(orphaned)}. Check API logs for failures.")
+                                
+                            # Refresh the scanner results to clear the screen
+                            threshold = st.session_state.get("orphan_inactive_days", 30)
+                            st.session_state.orphan_result = api_get(
+                                f"/users/orphaned-check?inactive_days={threshold}"
+                            )
+                            st.rerun()
 
                     for u in orphaned:
-                        risk_color = "#f85149" if u["risk"] == "HIGH" else "#e3b341"
-                        last_act   = u["last_activity"][:10] if u["last_activity"] else "Never"
-                        days_str   = f"{u['days_inactive']} days" if u["days_inactive"] is not None else "Never active"
+                        risk_color = "#f85149" if u.get("risk") == "HIGH" else "#e3b341"
+                        last_act   = u["last_activity"][:10] if u.get("last_activity") else "Never"
+                        days_str   = f"{u['days_inactive']} days" if u.get("days_inactive") is not None else "Never active"
 
                         col1, col2 = st.columns([5, 1])
                         col1.markdown(f"""
@@ -1619,17 +1668,17 @@ elif "IT Admin" in view:
                                         <span style='font-size:12px;font-weight:400;
                                                background:{risk_color}22;color:{risk_color};
                                                padding:2px 10px;border-radius:12px;
-                                               margin-left:8px'>{u["risk"]} RISK</span>
+                                               margin-left:8px'>{u.get("risk", "UNKNOWN")} RISK</span>
                                     </div>
                                     <div style='font-size:12px;color:#8b949e;margin-top:4px;
                                                 font-family:IBM Plex Mono,monospace'>
-                                        {u["department"]} · {u["job_title"]} · {u["email"]}
+                                        {u.get("department", "Unknown")} · {u.get("job_title", "Unknown")} · {u.get("email", "")}
                                     </div>
                                     <div style='font-size:12px;color:#8b949e;margin-top:6px'>
                                         Last activity:
                                         <span style='color:{risk_color}'>{last_act}</span>
                                         &nbsp;·&nbsp; {days_str}
-                                        &nbsp;·&nbsp; {u["reason"]}
+                                        &nbsp;·&nbsp; {u.get("reason", "")}
                                     </div>
                                 </div>
                             </div>
@@ -1641,7 +1690,6 @@ elif "IT Admin" in view:
                                 code, resp = api_patch(f"/users/{u['id']}/offboard")
                             if code == 200:
                                 st.success(f"{u['username']} offboarded. Revoked: {resp.get('revoked')}")
-                                # Re-fetch so offboarded user disappears from the list
                                 threshold = st.session_state.get("orphan_inactive_days", 30)
                                 st.session_state.orphan_result = api_get(
                                     f"/users/orphaned-check?inactive_days={threshold}"
@@ -1650,6 +1698,7 @@ elif "IT Admin" in view:
                             else:
                                 st.error(resp.get("detail", "Error"))
 
+                        # Kept your Notify Manager logic intact
                         if u.get("manager_id") and st.button("Notify Mgr", key=f"notify_{u['id']}"):
                             code, resp = api_post(
                                 f"/users/{u['id']}/notify-manager",
@@ -1661,7 +1710,7 @@ elif "IT Admin" in view:
                                 st.error(resp.get("detail", "Error"))
 
                 if clean:
-                    with st.expander(f"View {len(clean)} clean accounts"):
+                    with st.expander(f"View {len(clean)} Healthy Accounts"):
                         for u in clean:
                             st.markdown(
                                 f'<div style="font-size:12px;color:#8b949e;font-family:'
@@ -1827,3 +1876,5 @@ elif "IT Admin" in view:
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
+                            
+                            

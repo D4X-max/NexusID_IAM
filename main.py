@@ -6,6 +6,7 @@ Docs: http://127.0.0.1:8000/docs
 """
 
 import sys, random, uuid, asyncio
+import secrets
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
@@ -1225,3 +1226,47 @@ async def onboard_single_user(user_data: UserCreate, db: Session):
         "status": user.status,
         "provisioned": entitlements
     }
+
+@app.post("/demo/inject-heatmap", tags=["Demo"])
+def inject_heatmap_data(db: Session = Depends(get_db)):
+    """
+    HACKATHON DEMO: Injects a mathematical spread of HIGH and MEDIUM 
+    risk orphaned accounts across multiple departments to make the 
+    pandas background_gradient render beautifully.
+    """
+    from database import UserDB, append_log
+    import random
+    from datetime import datetime, timezone, timedelta
+
+    # 1. Inject HIGH Risk (Active users with 0 audit logs)
+    # This will make Engineering the darkest red
+    high_risk_spread = {"Engineering": 6, "Sales": 3, "Marketing": 1}
+    
+    for dept, count in high_risk_spread.items():
+        for _ in range(count):
+            uid = random.randint(10000, 49999)
+            db.add(UserDB(
+                id=uid, username=f"legacy_{dept[:3]}_{uid}", 
+                email=f"{uid}@vendor.com", department=dept, 
+                job_title="External Vendor", status="Active"
+            ))
+
+    # 2. Inject MEDIUM Risk (Active users with a log from 45 days ago)
+    # This will make HR the darkest orange
+    med_risk_spread = {"Engineering": 2, "HR": 5, "Sales": 2}
+    past_date = datetime.now(timezone.utc) - timedelta(days=45)
+
+    for dept, count in med_risk_spread.items():
+        for _ in range(count):
+            uid = random.randint(50000, 99999)
+            db.add(UserDB(
+                id=uid, username=f"stale_{dept[:3]}_{uid}", 
+                email=f"{uid}@contractor.com", department=dept, 
+                job_title="Contractor", status="Active"
+            ))
+            # Write an old log so the scanner flags them as 45 days inactive (Medium Risk)
+            append_log(db, actor_id=0, action="AUTO_PROVISION", target_user_id=uid,
+                       outcome="Success", details={"note": "Old simulation"}, timestamp=past_date)
+
+    db.commit()
+    return {"message": "Heatmap data perfectly injected!"}
